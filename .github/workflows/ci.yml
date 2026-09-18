@@ -1,0 +1,68 @@
+# Lint the installer and prove the bundle still builds.
+#
+# The install itself is not exercised here. It needs root, device-mapper and a
+# KVM-capable host, so it runs on the Linux testbed rather than on a hosted
+# runner.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check POSIX syntax
+        run: |
+          set -eu
+          sh -n install.sh
+          sh -n scripts/build-bundle.sh
+          # The wrappers and uninstaller are generated into the tarball by
+          # build-bundle.sh, so lint the text it will write rather than waiting
+          # to find out on a host.
+          awk '/<<.UNEOF.$/ {f=1; next} /^UNEOF$/ {f=0} f' scripts/build-bundle.sh > /tmp/brig-uninstall.sh
+          head -1 /tmp/brig-uninstall.sh | grep -q '^#!/bin/sh$' \
+            || { echo "extracting the uninstaller went wrong"; exit 1; }
+          sh -n /tmp/brig-uninstall.sh
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -s sh install.sh scripts/build-bundle.sh /tmp/brig-uninstall.sh
+
+  # Build the real bundle on each arch's native runner: urunc, urunit and the
+  # initrd from source (never a released urunc), the guest kernel pulled, the
+  # configs generated, everything packed. Native, so no qemu. A smoke test of the
+  # whole build path -- not a reproducibility gate, since a source-built urunc is
+  # not byte-for-byte identical across builds.
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build a generic-boot bundle (${{ matrix.arch }})
+        env:
+          SOURCE_DATE_EPOCH: '0'
+        run: |
+          set -eu
+          scripts/build-bundle.sh --arch "${{ matrix.arch }}" --version ci --variant generic-boot --out dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.arch }}
+          path: dist/*
