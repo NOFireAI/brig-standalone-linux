@@ -241,8 +241,10 @@ supported.
 
 The tarball is not assembled on the host. This repository's release workflow runs
 [`scripts/build-bundle.sh`](scripts/build-bundle.sh), which does all the building
-and publishes one tarball per architecture. That build needs docker (and qemu for
-the cross-architecture case); the install does not.
+and publishes one tarball per architecture, building each on its own native runner
+(amd64 on `ubuntu-24.04`, arm64 on `ubuntu-24.04-arm`). That build needs docker;
+the install does not. Running `build-bundle.sh` by hand to cross-build the other
+architecture needs qemu/binfmt instead of a native runner.
 
 `build-bundle.sh` fetches the components that have upstream releases and builds
 the three that do not:
