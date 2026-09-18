@@ -99,6 +99,11 @@ MONITORS="${MONITORS:-firecracker cloud-hypervisor solo5-hvt solo5-spt}"
 ASSETS_REGISTRY="${ASSETS_REGISTRY:-ghcr.io}"
 ASSETS_REPO="${ASSETS_REPO:-nofireai/hull-assets}"
 ASSETS_VERSION="${ASSETS_VERSION:-0.1.4}"
+# amd64 kernel: a bunny-built Cloud-Hypervisor kernel image (a plain OCI image
+# carrying the kernel at /.boot/kernel), extracted with docker like busybox is.
+# Empty falls back to the hull-assets oras pull. arm64 has no such image, so it
+# always takes the hull-assets path below.
+KERNEL_IMAGE_AMD64="${KERNEL_IMAGE_AMD64:-harbor.nbfc.io/nubificus/bunny/linux-kernel-cloud-hypervisor:latest}"
 VIRTIOFSD="${VIRTIOFSD:-true}"
 
 # Fixed install layout, baked into the config files the bundle carries. install.sh
@@ -572,20 +577,39 @@ fi
 chmod 0755 "$STAGE"/bin/*
 
 # ---- guest boot assets (generic-boot / introspection) ------------------------
-# The kernel comes from hull-assets (pulled with the oras we just bundled, from
-# the same repo and tags brig and hull use). The initrd does not: hull-assets'
-# initrd carries hull's agent, so it is thrown away and the brig-built one above
-# takes its place. A fresh bundle.json records the urunc the agent was built
-# against, so the installer can check coherence.
+# The kernel on amd64 comes from KERNEL_IMAGE_AMD64 (a bunny-built OCI image with
+# the kernel at /.boot/kernel), extracted with docker; on arm64 (or if that is
+# unset) it comes from hull-assets, pulled with the oras we just bundled. The
+# initrd never does: hull-assets' initrd carries hull's agent, so it is thrown
+# away and the brig-built one above takes its place. A fresh bundle.json records
+# the urunc the agent was built against, so the installer can check coherence.
 ASSETS_URUNC_REF=""
+KERNEL_SOURCE=""
+KERNEL_FROM_ASSETS=false
 if [ "$VARIANT" != "stock" ]; then
-    a_tag="$ASSETS_VERSION-linux-$ARCH"
-    info "fetching the guest kernel $ASSETS_REPO:$a_tag with oras"
-    ( cd "$STAGE/share/guest" \
-      && "$STAGE/bin/oras" pull "$ASSETS_REGISTRY/$ASSETS_REPO:$a_tag" ) \
-        || fatal "could not pull $ASSETS_REPO:$a_tag"
     case "$ARCH" in amd64) kernel=bzImage ;; arm64) kernel=Image ;; esac
-    [ -f "$STAGE/share/guest/$kernel" ] || fatal "no $kernel in the guest assets"
+    if [ "$ARCH" = "amd64" ] && [ -n "$KERNEL_IMAGE_AMD64" ]; then
+        info "extracting the guest kernel from $KERNEL_IMAGE_AMD64 (linux/amd64)"
+        # A scratch-style image (no shell), so copy the kernel out of a throwaway
+        # container instead of exec'ing cat inside it. The dummy command is never
+        # run; docker create just needs one, and docker cp works on a created
+        # container. docker create pulls the image if it is not present.
+        kcid="$(docker create --platform linux/amd64 "$KERNEL_IMAGE_AMD64" /nonexistent)" \
+            || fatal "could not create a container from $KERNEL_IMAGE_AMD64"
+        docker cp "$kcid:/.boot/kernel" "$STAGE/share/guest/$kernel"; kcp=$?
+        docker rm "$kcid" >/dev/null 2>&1 || true
+        [ "$kcp" -eq 0 ] || fatal "could not copy /.boot/kernel from $KERNEL_IMAGE_AMD64"
+        KERNEL_SOURCE="$KERNEL_IMAGE_AMD64"
+    else
+        a_tag="$ASSETS_VERSION-linux-$ARCH"
+        info "fetching the guest kernel $ASSETS_REPO:$a_tag with oras"
+        ( cd "$STAGE/share/guest" \
+          && "$STAGE/bin/oras" pull "$ASSETS_REGISTRY/$ASSETS_REPO:$a_tag" ) \
+            || fatal "could not pull $ASSETS_REPO:$a_tag"
+        KERNEL_SOURCE="$ASSETS_REGISTRY/$ASSETS_REPO:$a_tag"
+        KERNEL_FROM_ASSETS=true
+    fi
+    [ -s "$STAGE/share/guest/$kernel" ] || fatal "no $kernel in the guest assets"
 
     # Replace hull's initrd with the brig-built one.
     [ -f "$DL/container-initrd" ] || fatal "the brig container-initrd was not built"
@@ -596,7 +620,7 @@ if [ "$VARIANT" != "stock" ]; then
     cat > "$STAGE/share/guest/bundle.json" <<JSON
 {"ref": "$URUNC_REF", "urunit": "$URUNIT_REF", "built_by": "brig-build-bundle"}
 JSON
-    info "  kernel from hull-assets, initrd built for brig (urunc $URUNC_REF)"
+    info "  kernel from $KERNEL_SOURCE, initrd built for brig (urunc $URUNC_REF)"
 fi
 
 # ---- config files, systemd units, wrappers -----------------------------------
@@ -820,8 +844,9 @@ NERDCTL_VERSION=$NERDCTL_VERSION
 CNI_VERSION=$CNI_VERSION
 ORAS_VERSION=$ORAS_VERSION
 COSIGN_VERSION=$COSIGN_VERSION
-ASSETS_REPO=$([ "$VARIANT" = "stock" ] && echo "" || echo "$ASSETS_REPO")
-ASSETS_VERSION=$([ "$VARIANT" = "stock" ] && echo "" || echo "$ASSETS_VERSION")
+KERNEL_SOURCE=$KERNEL_SOURCE
+ASSETS_REPO=$([ "$KERNEL_FROM_ASSETS" = true ] && echo "$ASSETS_REPO" || echo "")
+ASSETS_VERSION=$([ "$KERNEL_FROM_ASSETS" = true ] && echo "$ASSETS_VERSION" || echo "")
 ASSETS_URUNC_REF=$ASSETS_URUNC_REF
 PINS
 
