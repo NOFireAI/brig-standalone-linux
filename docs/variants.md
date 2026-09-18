@@ -52,10 +52,12 @@ compiles one, from `urunc-dev/urunc` at branch `feat/unchanged_containers`, in a
     sh -c "git config --global --add safe.directory /app && make static"
 ```
 
-The static urunc binary is cgo, so the build is native to the target architecture
-rather than cross-compiled — the arm64 build runs under qemu/binfmt. The result,
-urunc and its shim, goes into the tarball. `install.sh` never builds; it unpacks
-what the build produced.
+The static urunc binary is cgo, so it is built native to the target architecture
+rather than cross-compiled. The release builds each arch on its own native runner
+(amd64 on `ubuntu-24.04`, arm64 on `ubuntu-24.04-arm`), so no emulation is
+involved; only a hand cross-build on one host falls back to qemu/binfmt. The
+result, urunc and its shim, goes into the tarball. `install.sh` never builds; it
+unpacks what the build produced.
 
 ### The kernel comes from hull-assets, the initrd is built for brig
 
