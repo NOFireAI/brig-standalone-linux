@@ -1,0 +1,106 @@
+# Build, sign and publish the self-contained brig bundles.
+#
+# Every component is an upstream release artifact except urunc, which is built
+# from source because no release boots an ordinary container image. That build
+# runs in a Go container, native for amd64 and under qemu for arm64, so both
+# architectures are produced on one runner.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build, e.g. v0.1.0
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      # Keyless cosign and the provenance attestation both take a short-lived
+      # certificate from Sigstore against this workflow's OIDC identity.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: sigstore/cosign-installer@v3
+      - uses: anchore/sbom-action/download-syft@v0
+      # Register binfmt so the arm64 urunc can be built native inside an arm64
+      # container on this amd64 runner.
+      - uses: docker/setup-qemu-action@v3
+
+      - name: Build the bundles
+        env:
+          # Pin every timestamp in the archives so a repack of the same pins
+          # produces the same bytes. The urunc binary is built from a fixed
+          # commit; its reproducibility rests on the Go toolchain image too.
+          SOURCE_DATE_EPOCH: '0'
+        run: |
+          set -eu
+          for arch in amd64 arm64; do
+            scripts/build-bundle.sh --arch "$arch" \
+              --version "${{ steps.version.outputs.version }}" \
+              --variant generic-boot --out dist
+          done
+          cp install.sh dist/install.sh
+          ls -la dist
+
+      - name: Generate an SBOM per bundle
+        run: |
+          set -eu
+          for arch in amd64 arm64; do
+            name="brig-standalone-${{ steps.version.outputs.version }}-linux-$arch"
+            rm -rf "sbom-src/$arch" && mkdir -p "sbom-src/$arch"
+            tar -xzf "dist/$name.tar.gz" -C "sbom-src/$arch"
+            syft scan "dir:sbom-src/$arch" \
+              -o spdx-json="dist/$name.sbom.spdx.json" \
+              -o cyclonedx-json="dist/$name.sbom.cdx.json"
+          done
+          rm -rf sbom-src
+
+      # checksums.txt covers every asset, so the one signature below vouches
+      # for all of them.
+      - name: Checksum every asset
+        working-directory: dist
+        run: sha256sum -- * > checksums.txt && cat checksums.txt
+
+      - name: Sign the checksums
+        working-directory: dist
+        run: |
+          cosign sign-blob checksums.txt \
+            --output-certificate checksums.txt.pem \
+            --output-signature checksums.txt.sig \
+            --yes
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/brig-standalone-*.tar.gz
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "${{ steps.version.outputs.version }}" \
+            --generate-notes \
+            --draft \
+            dist/*
