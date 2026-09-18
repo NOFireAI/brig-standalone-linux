@@ -59,22 +59,38 @@ involved; only a hand cross-build on one host falls back to qemu/binfmt. The
 result, urunc and its shim, goes into the tarball. `install.sh` never builds; it
 unpacks what the build produced.
 
-### The kernel comes from hull-assets, the initrd is built for brig
+### The kernel is fetched, the initrd is built for brig
 
 The two files a generic boot names are the guest kernel and the initrd, and they
 come from different places.
 
-**The kernel** comes from hull-assets, the OCI artifact hull and brig already
-use, one tag per platform:
+**The kernel** is fetched per architecture, and the two arches draw from
+different sources:
 
-```
-ghcr.io/nofireai/hull-assets:<version>-linux-<arch>   immutable
-ghcr.io/nofireai/hull-assets:linux-<arch>             moving
-```
+- **amd64** takes the kernel from the bunny-built Cloud-Hypervisor kernel image,
+  a plain OCI image that carries the kernel at `/.boot/kernel`:
 
-The artifact's layers are the files themselves, each named by its
-`org.opencontainers.image.title`. `build-bundle.sh` pulls the kernel out of it
-with the bundled `oras`. The kernel is generic and not brig-specific.
+  ```
+  harbor.nbfc.io/nubificus/bunny/linux-kernel-cloud-hypervisor:latest
+  ```
+
+  The image is scratch-style (no shell), so `build-bundle.sh` copies the kernel
+  out of a throwaway container with `docker create` + `docker cp` rather than
+  `oras`. The default is overridable with `KERNEL_IMAGE_AMD64`; set it empty to
+  fall back to the hull-assets path below.
+
+- **arm64** takes the kernel from hull-assets, the OCI artifact hull and brig
+  already use, one tag per platform, pulled with the bundled `oras`:
+
+  ```
+  ghcr.io/nofireai/hull-assets:<version>-linux-<arch>   immutable
+  ghcr.io/nofireai/hull-assets:linux-<arch>             moving
+  ```
+
+  The artifact's layers are the files themselves, each named by its
+  `org.opencontainers.image.title`.
+
+Either way the kernel is generic and not brig-specific.
 
 **The initrd is not taken from hull-assets.** brig execs into a guest through an
 in-guest agent, `urunit-agent`, whose wire protocol (`pkg/agentproto`) is a
@@ -159,8 +175,10 @@ refuses a stock binary, rather than printing a table of zeroes.
    assets optional? A separate build keeps a stock tarball small.
 2. Where do the Option-C patches live once they are pushed? A branch is enough to
    build from; upstream is better.
-3. Settled: the guest kernel comes from `hull-assets` by the same tags hull uses;
-   the runtime is built from `urunc-dev/urunc` at `feat/unchanged_containers`; and
+3. Settled: the guest kernel is fetched — on amd64 from the bunny
+   Cloud-Hypervisor kernel image, on arm64 from `hull-assets` by the same tags
+   hull uses; the runtime is built from `urunc-dev/urunc` at
+   `feat/unchanged_containers`; and
    the initrd is built for brig from `NOFireAI/urunit` at `urunit_agent` plus
    urunc's own `packaging/container-initrd`, so its agent matches the shim.
 4. Does hvi join `monitors-build`, or does `build-bundle.sh` learn a second
