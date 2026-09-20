@@ -145,15 +145,19 @@ $ brig run claude ~/code/demo
 private `nerdctl`; `boot` `!!` is normal before the first run, since brig would
 otherwise fetch assets on first use, and here they are already in place.
 
-The `brig` group owns the socket, so a normal user can run brig once they are in
-it. The install adds `$SUDO_USER` for you. Add anyone else with:
+The `brig` group owns the socket, but that is not enough to run brig as a normal
+user. nerdctl decides whether it is rootless from its own euid, and a rootless
+nerdctl enters a user namespace that drops supplementary groups, so the group
+never arrives. A non-root user gets a containerd of their own instead:
 
 ```console
-# usermod -aG brig <user>
+$ brig-ctl rootless
+$ brig run claude ~/code/demo
 ```
 
-and have them log in again to pick up the group. (The systemd service hands the
-socket to the group by name once containerd is up.)
+[docs/rootless.md](docs/rootless.md) has the detail, including the two things
+that still need root once per host and how to build a bundle that installs into
+a home directory.
 
 ## Driving the runtime by hand
 
