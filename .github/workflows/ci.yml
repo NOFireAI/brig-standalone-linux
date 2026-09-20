@@ -31,11 +31,22 @@ jobs:
           head -1 /tmp/brig-uninstall.sh | grep -q '^#!/bin/sh$' \
             || { echo "extracting the uninstaller went wrong"; exit 1; }
           sh -n /tmp/brig-uninstall.sh
+          # The rootless setup is written in two halves, a header carrying the
+          # baked layout and a body. Reassemble it with a stub header so the
+          # body is linted the same way.
+          printf '#!/bin/sh\nset -eu\nPREFIX=/x\nNAMESPACE=x\nSNAPSHOTTER=x\nCNI_DIR=/x\nETC_DIR=/x\n' \
+            > /tmp/brig-rootless-setup.sh
+          awk '/<<.SETUPBODY.$/ {f=1; next} /^SETUPBODY$/ {f=0} f' scripts/build-bundle.sh \
+            >> /tmp/brig-rootless-setup.sh
+          grep -q 'brig-containerd.service' /tmp/brig-rootless-setup.sh \
+            || { echo "extracting the rootless setup went wrong"; exit 1; }
+          sh -n /tmp/brig-rootless-setup.sh
 
       - name: shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck -s sh install.sh scripts/build-bundle.sh /tmp/brig-uninstall.sh
+          shellcheck -s sh install.sh scripts/build-bundle.sh /tmp/brig-uninstall.sh \
+            /tmp/brig-rootless-setup.sh
 
   # Build the real bundle on each arch's native runner: urunc, urunit and the
   # initrd from source (never a released urunc), the guest kernel pulled, the
