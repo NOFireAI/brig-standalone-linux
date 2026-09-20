@@ -241,8 +241,12 @@ ask_systemd() {
         yes) INSTALL_SYSTEMD=true; return 0 ;;
         no)  INSTALL_SYSTEMD=false; return 0 ;;
     esac
-    # ask
-    if [ -r /dev/tty ]; then
+    # ask. Opening it is the test, because /dev/tty passes -r with no
+    # controlling terminal and then fails to open, which printed the prompt and
+    # an error before defaulting anyway. The open goes in a subshell: dash
+    # treats a redirection failure on a compound command as fatal, even as an
+    # if condition, and takes the whole script with it.
+    if (: </dev/tty) 2>/dev/null; then
         printf '[brig-install] Install and enable the %s systemd service now? [Y/n] ' "$SERVICE_NAME" >&2
         read -r ans </dev/tty || ans=y
         case "$ans" in n|N|no|NO) INSTALL_SYSTEMD=false ;; *) INSTALL_SYSTEMD=true ;; esac
@@ -620,7 +624,9 @@ main() {
     ver="$(awk -F= '$1 == "BUNDLE_VERSION" {print $2}' "$PINS" 2>/dev/null)"
     grp_note=""
     getent group "$BRIG_GROUP" >/dev/null 2>&1 \
-        && grp_note="  group:     $BRIG_GROUP owns the socket; add users with: usermod -aG $BRIG_GROUP <user>
+        && grp_note="  group:     $BRIG_GROUP owns the socket, which is not enough to run
+             brig as a normal user: see docs/rootless.md, or run
+             $BIN_DIR/brig-ctl rootless as that user
 "
     start_note="  started:   $SERVICE_NAME.service"
     [ "$INSTALL_SYSTEMD" = "true" ] || start_note="  not started: no systemd service was installed"
