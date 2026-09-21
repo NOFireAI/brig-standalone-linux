@@ -41,12 +41,20 @@ jobs:
           grep -q 'brig-containerd.service' /tmp/brig-rootless-setup.sh \
             || { echo "extracting the rootless setup went wrong"; exit 1; }
           sh -n /tmp/brig-rootless-setup.sh
+          # brig-ctl is written the same way and now carries the prefix guard
+          # and the rootless-bundle check, so it is linted too.
+          printf '#!/bin/sh\nset -eu\nPREFIX=/x\nCONTAINERD_ADDRESS=x\nCONTAINERD_NAMESPACE=x\nCONTAINERD_SNAPSHOTTER=x\nNERDCTL_TOML=x\nCNI_PATH=x\nSERVICE_NAME=x\nBRIG_ENV=/x\nROOTLESS=false\n' \
+            > /tmp/brig-ctl
+          awk '/<<.CTLBODY.$/ {f=1; next} /^CTLBODY$/ {f=0} f' scripts/build-bundle.sh >> /tmp/brig-ctl
+          grep -q 'brig-ctl <command>' /tmp/brig-ctl \
+            || { echo "extracting brig-ctl went wrong"; exit 1; }
+          sh -n /tmp/brig-ctl
 
       - name: shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           shellcheck -s sh install.sh scripts/build-bundle.sh /tmp/brig-uninstall.sh \
-            /tmp/brig-rootless-setup.sh
+            /tmp/brig-rootless-setup.sh /tmp/brig-ctl
 
   # Build the real bundle on each arch's native runner: urunc, urunit and the
   # initrd from source (never a released urunc), the guest kernel pulled, the
@@ -60,18 +68,31 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-24.04
+            rootless: plain
+            flag: ''
+          - arch: amd64
+            runner: ubuntu-24.04
+            rootless: rootless
+            flag: '--rootless'
           - arch: arm64
             runner: ubuntu-24.04-arm
+            rootless: plain
+            flag: ''
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            rootless: rootless
+            flag: '--rootless'
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build a generic-boot bundle (${{ matrix.arch }})
+      - name: Build a generic-boot bundle (${{ matrix.arch }}, ${{ matrix.rootless }})
         env:
           SOURCE_DATE_EPOCH: '0'
         run: |
           set -eu
-          scripts/build-bundle.sh --arch "${{ matrix.arch }}" --version ci --variant generic-boot --out dist
+          scripts/build-bundle.sh --arch "${{ matrix.arch }}" --version ci \
+            --variant generic-boot ${{ matrix.flag }} --out dist
 
       # install.sh retargets a user install by rewriting the layout the bundle
       # was generated with, which it reads from here.
@@ -82,8 +103,16 @@ jobs:
           for k in PREFIX DATA_DIR RUN_DIR; do
             grep -q "^$k=/" "$p" || { echo "pins.env does not record $k"; exit 1; }
           done
+          # install.sh reads this back to refuse a user install on a bundle
+          # that cannot serve one.
+          case "${{ matrix.rootless }}" in
+            rootless) want=true ;;
+            *)        want=false ;;
+          esac
+          grep -q "^ROOTLESS=$want$" "$p" \
+            || { echo "pins.env does not say ROOTLESS=$want"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: bundle-${{ matrix.arch }}
+          name: bundle-${{ matrix.arch }}-${{ matrix.rootless }}
           path: dist/*

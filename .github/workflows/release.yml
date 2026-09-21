@@ -43,13 +43,25 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-24.04
+            rootless: plain
+            flag: ''
+          - arch: amd64
+            runner: ubuntu-24.04
+            rootless: rootless
+            flag: '--rootless'
           - arch: arm64
             runner: ubuntu-24.04-arm
+            rootless: plain
+            flag: ''
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            rootless: rootless
+            flag: '--rootless'
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build the ${{ matrix.arch }} bundle
+      - name: Build the ${{ matrix.arch }} ${{ matrix.rootless }} bundle
         env:
           # Pin every timestamp in the archives. The fetched components are
           # byte-identical per pin; the source-built urunc, urunit and initrd
@@ -59,11 +71,11 @@ jobs:
           set -eu
           scripts/build-bundle.sh --arch "${{ matrix.arch }}" \
             --version "${{ needs.version.outputs.version }}" \
-            --variant generic-boot --out dist
+            --variant generic-boot ${{ matrix.flag }} --out dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: bundle-${{ matrix.arch }}
+          name: bundle-${{ matrix.arch }}-${{ matrix.rootless }}
           path: dist/*
 
   release:
