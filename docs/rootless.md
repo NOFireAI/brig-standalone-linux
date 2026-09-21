@@ -87,8 +87,40 @@ monitor is the host-side process that boots it.
 
 ## Installing into a home directory
 
-The layout is fixed at build time, so a bundle built for a prefix under `$HOME`
-can be unpacked by the user who runs it, with no root anywhere in the install:
+`install.sh --user` puts the whole thing under `$HOME` and touches nothing
+else. It is what a non-root caller gets by default, so on a machine where you
+have no root at all:
+
+```console
+$ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/main/install.sh | sh -
+$ ~/.local/bin/brig doctor && ~/.local/bin/brig run claude ~/code/demo
+```
+
+The tree lands in `~/.local/share/brig`, as `data/` and `agent/` the way
+`/var/lib/brig` holds them; the launchers go in `~/.local/bin` and the socket
+in `$XDG_RUNTIME_DIR`. The last stage runs `brig-rootless-setup.sh`, so the
+daemon is up when the installer returns. `brig-ctl uninstall` takes it down
+again as the same user.
+
+The published tarball is generated for `/var/lib/brig/data`, so a user install
+rewrites that path once the tree is in place. Nine generated files carry it:
+`etc/brig-env.sh`, `etc/*.toml`, the systemd units and the scripts in `bin/`.
+No binary does. The installer greps for the old prefix afterwards and fails if
+any of it survived, which is what keeps that list honest as the bundle grows.
+
+Two things differ from a root install. A thin pool needs `losetup` and
+`dmsetup`, which a user namespace does not get, so a user install is overlayfs
+only. And the tree is one copy per user where a root install is shared, so with
+root and several users, `brig-ctl rootless` against one shared install is the
+better trade.
+
+The host prerequisites above still apply. `install.sh --user` reports both
+before it unpacks anything, and the rootless setup asks sudo once to fix them.
+The AppArmor profile names this prefix's rootlesskit, so a profile written for
+`/var/lib` does not cover a tree in `$HOME`.
+
+Building for a prefix directly is still an option, for an air-gapped host or a
+layout of your own:
 
 ```console
 $ PREFIX=$HOME/.local/share/brig/data \
@@ -97,13 +129,5 @@ $ PREFIX=$HOME/.local/share/brig/data \
   ./scripts/build-bundle.sh --arch amd64 --version v0.2.0 --out dist
 ```
 
-Unpack it, write a launcher that sources `etc/brig-env.sh` and execs
-`bin/brig`, then run `bin/brig-rootless-setup.sh`. The two host prerequisites
-above still apply, and the AppArmor profile has to name this prefix's
-rootlesskit rather than another one's.
-
-The prefix is baked into the generated configs, so a bundle built for one home
-does not serve another. Making one tarball serve any user means rewriting those
-paths at unpack time, which is what an `install.sh --user` mode would do. The
-files that carry them are text: `etc/brig-env.sh`, `etc/*.toml` and the
-generated scripts in `bin/`.
+`pins.env` records that layout, so `install.sh` retargets from what the bundle
+was built with rather than assuming the default.

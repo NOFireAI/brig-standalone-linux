@@ -155,9 +155,17 @@ $ brig-ctl rootless
 $ brig run claude ~/code/demo
 ```
 
+Or skip root entirely. Run `install.sh` as a normal user and it installs into
+`~/.local/share/brig`, with the launchers in `~/.local/bin`, and starts the
+rootless daemon for you:
+
+```console
+$ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/main/install.sh | sh -
+$ ~/.local/bin/brig run claude ~/code/demo
+```
+
 [docs/rootless.md](docs/rootless.md) has the detail, including the two things
-that still need root once per host and how to build a bundle that installs into
-a home directory.
+that still need root once per host, and what a home install gives up.
 
 ## Driving the runtime by hand
 
