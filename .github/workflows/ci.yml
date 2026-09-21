@@ -73,6 +73,16 @@ jobs:
           set -eu
           scripts/build-bundle.sh --arch "${{ matrix.arch }}" --version ci --variant generic-boot --out dist
 
+      # install.sh retargets a user install by rewriting the layout the bundle
+      # was generated with, which it reads from here.
+      - name: Check the bundle records its layout
+        run: |
+          set -eu
+          p="$(ls dist/*.pins.env)"
+          for k in PREFIX DATA_DIR RUN_DIR; do
+            grep -q "^$k=/" "$p" || { echo "pins.env does not record $k"; exit 1; }
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: bundle-${{ matrix.arch }}

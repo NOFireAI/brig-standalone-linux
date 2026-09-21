@@ -32,21 +32,44 @@ DEFAULT_RELEASE_VERSION="latest"
 
 GITHUB="https://github.com"
 
-# Fixed layout. The tarball's config files carry these paths, so they are not
-# configurable at install time: the tree is placed exactly here.
+# The layout the tarball is built with, and the one a root install uses.
 # k3s-style: one root (/var/lib/brig) with two sibling trees -- the immutable
 # bundle under data/ and mutable state under agent/ -- the socket in /run, and
 # the launchers on the host PATH.
-ROOT_DIR="/var/lib/brig"
-PREFIX="$ROOT_DIR/data"     # immutable binaries, config, boot assets
-DATA_DIR="$ROOT_DIR/agent"  # mutable state: containerd store, snapshots, pool
-RUN_DIR="/run/brig"         # the private containerd socket
+BUILD_ROOT_DIR="/var/lib/brig"
+BUILD_PREFIX="$BUILD_ROOT_DIR/data"
+BUILD_DATA_DIR="$BUILD_ROOT_DIR/agent"
+BUILD_RUN_DIR="/run/brig"
 
-BIN_DIR="$PREFIX/bin"
-ETC_DIR="$PREFIX/etc"
-CONTAINERD_SOCK="$RUN_DIR/containerd.sock"
-STAMP="$PREFIX/.install-stamp"
-PINS="$PREFIX/pins.env"
+# Root installs into the host layout, a normal user into their home. --system
+# and --user force it, for a root user who wants a home install or the reverse.
+if [ "$(id -u)" -eq 0 ]; then
+    INSTALL_MODE="${INSTALL_BRIG_MODE:-system}"
+else
+    INSTALL_MODE="${INSTALL_BRIG_MODE:-user}"
+fi
+
+# The tarball's configs carry the build layout as literal paths, so a user
+# install rewrites them once the tree is down: see retarget_tree.
+set_layout() {
+    if [ "$INSTALL_MODE" = "user" ]; then
+        ROOT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/brig"
+        RUN_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/brig"
+        LAUNCH_DIR="$HOME/.local/bin"
+    else
+        ROOT_DIR="$BUILD_ROOT_DIR"
+        RUN_DIR="$BUILD_RUN_DIR"
+        LAUNCH_DIR="/usr/local/bin"
+    fi
+    PREFIX="$ROOT_DIR/data"     # immutable binaries, config, boot assets
+    DATA_DIR="$ROOT_DIR/agent"  # mutable state: containerd store, snapshots, pool
+
+    BIN_DIR="$PREFIX/bin"
+    ETC_DIR="$PREFIX/etc"
+    CONTAINERD_SOCK="$RUN_DIR/containerd.sock"
+    STAMP="$PREFIX/.install-stamp"
+    PINS="$PREFIX/pins.env"
+}
 
 SERVICE_NAME="brig-containerd"
 POOL_SERVICE_NAME="brig-devpool"
@@ -100,16 +123,20 @@ progress() {
 
 usage() {
     cat >&2 <<'USAGE'
-Usage: install.sh [--help] [--verbose] [--quiet]
+Usage: install.sh [--help] [--verbose] [--quiet] [--system|--user]
 
-Fetches the brig release tarball and installs it into /var/lib/brig/data, with state in
-/var/lib/brig and the socket in /run/brig. It builds nothing.
+Fetches the brig release tarball and installs it. As root the tree goes to
+/var/lib/brig/data with state in /var/lib/brig and the socket in /run/brig. As a
+normal user it goes to ~/.local/share/brig instead and nothing outside $HOME is
+touched, which needs the host prepared once: see docs/rootless.md. It builds
+nothing.
 
   INSTALL_BRIG_RELEASE_REPO   repo that publishes the tarball
                               (default: NOFireAI/brig-standalone-linux)
   INSTALL_BRIG_RELEASE_VERSION  release tag, or "latest" (default: latest)
   INSTALL_BRIG_BUNDLE         a local tarball (or URL) to install instead of
                               fetching the release
+  INSTALL_BRIG_MODE           system | user (default: user unless root)
   INSTALL_BRIG_GROUP          unix group granted the socket (default: brig)
   INSTALL_BRIG_USER           user added to that group (default: $SUDO_USER)
   INSTALL_BRIG_SYSTEMD        ask | yes | no. Install the systemd service?
@@ -130,6 +157,8 @@ USAGE
 # ---------------------------------------------------------------- environment
 
 setup_env() {
+    set_layout
+
     RELEASE_REPO="${INSTALL_BRIG_RELEASE_REPO:-$DEFAULT_RELEASE_REPO}"
     RELEASE_VERSION="${INSTALL_BRIG_RELEASE_VERSION:-$DEFAULT_RELEASE_VERSION}"
     RELEASE_RESOLVED=""
@@ -151,6 +180,9 @@ setup_env() {
     SNAPSHOTTER=overlayfs
     WANT_DEVMAPPER=true
     [ "${INSTALL_BRIG_SNAPSHOTTER:-}" = "overlayfs" ] && WANT_DEVMAPPER=false
+    # A thin pool needs losetup and dmsetup, which a user namespace does not
+    # get. A user install is overlayfs only.
+    [ "$INSTALL_MODE" = "user" ] && WANT_DEVMAPPER=false
     POOL_SIZE="${INSTALL_BRIG_POOL_SIZE:-100G}"
     POOL_META_SIZE="${INSTALL_BRIG_POOL_META_SIZE:-10G}"
     POOL_PREALLOC="${INSTALL_BRIG_POOL_PREALLOC:-false}"
@@ -169,7 +201,12 @@ cleanup_tmp() {
 # ---------------------------------------------------------------- preflight
 
 verify_system() {
-    [ "$(id -u)" -eq 0 ] || fatal "this installer must run as root"
+    if [ "$INSTALL_MODE" = "system" ]; then
+        [ "$(id -u)" -eq 0 ] \
+            || fatal "a system install must run as root. Run with --user to install into \$HOME"
+    elif [ "$(id -u)" -eq 0 ]; then
+        fatal "a user install must not run as root: the tree would land root-owned in a home"
+    fi
 
     case "$(uname -s)" in
         Linux) ;;
@@ -205,6 +242,62 @@ verify_system() {
     command -v systemctl >/dev/null 2>&1 || HAVE_SYSTEMD=false
 }
 
+# What a user install cannot do for itself, in two classes. Nothing here can
+# fix the first, so the install stops; brig-rootless-setup.sh asks sudo for the
+# second, so those are reported and left to it. Each is a confusing failure
+# somewhere else if it goes unchecked: rootlesskit dies on its own re-exec
+# without the AppArmor profile, KVM_CREATE_VM returns EPERM without access to
+# the device, and newuidmap is setuid-root.
+verify_rootless_prereqs() {
+    miss=""
+    once=""
+    [ -d "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" ] \
+        || miss="$miss\n  no ${XDG_RUNTIME_DIR:-/run/user/$(id -u)}: log in as this user first"
+    [ "$HAVE_SYSTEMD" = "true" ] \
+        || miss="$miss\n  no systemctl: a user install needs a systemd user session"
+    command -v newuidmap >/dev/null 2>&1 \
+        || miss="$miss\n  newuidmap is missing:  sudo apt install uidmap"
+    command -v setfacl >/dev/null 2>&1 \
+        || miss="$miss\n  setfacl is missing:  sudo apt install acl"
+    grep -q "^$(id -un):" /etc/subuid 2>/dev/null && grep -q "^$(id -un):" /etc/subgid 2>/dev/null \
+        || miss="$miss\n  no subuid range:  sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $(id -un)"
+
+    # Readable here is the wrong question. The monitor runs inside a user
+    # namespace where this user's supplementary groups are gone, so the kvm
+    # group that makes /dev/kvm openable at this prompt reaches nothing in
+    # there -- testing r/w passes on exactly the hosts that then fail to boot a
+    # sandbox. Look for what the setup actually grants: this user by name, or a
+    # mode that covers everyone.
+    for d in kvm vhost-vsock; do
+        [ -e "/dev/$d" ] || continue
+        getfacl -p "/dev/$d" 2>/dev/null | grep -q "^user:$(id -un):rw" && continue
+        [ "$(stat -c %a "/dev/$d" 2>/dev/null || echo 0)" = 666 ] && continue
+        once="$once\n  no access to /dev/$d from inside the user namespace"
+    done
+
+    # The profile names the binary by path, so the one a /var/lib install left
+    # behind does not cover a tree in $HOME.
+    if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = "1" ] \
+        && ! grep -rqsF "$BIN_DIR/rootlesskit" /etc/apparmor.d/ 2>/dev/null; then
+        once="$once\n  no AppArmor profile for $BIN_DIR/rootlesskit"
+    fi
+
+    if [ -n "$miss" ]; then
+        # shellcheck disable=SC2059
+        printf "[brig-install] ERROR: this host is not set up for a rootless brig:$miss\n\n  See docs/rootless.md.\n" >&2
+        exit 1
+    fi
+    if [ -n "$once" ]; then
+        # Counted, not assumed: this said "two" whatever it had found, which
+        # reads as a second thing the reader has missed.
+        n=$(printf '%b' "$once" | grep -c '^  ')
+        if [ "$n" = 1 ]; then what="one host setting is"; else what="$n host settings are"; fi
+        # shellcheck disable=SC2059
+        printf "[brig-install] WARNING: $what still missing:$once\n" >&2
+        warn "brig-rootless-setup.sh will ask for sudo once to set those up"
+    fi
+}
+
 # An existing prefix is only ours if we stamped it.
 verify_root_dir() {
     PRIOR_POOL_CREATED=""
@@ -233,6 +326,9 @@ verify_root_dir() {
 # there is no one to ask, so default to yes; INSTALL_BRIG_SYSTEMD forces it.
 ask_systemd() {
     INSTALL_SYSTEMD=false
+    # The per-user daemon is a systemd --user unit, written by
+    # brig-rootless-setup.sh, so there is nothing to ask about.
+    [ "$INSTALL_MODE" = "user" ] && return 0
     if [ "$HAVE_SYSTEMD" != "true" ]; then
         [ "$SYSTEMD_CHOICE" = "yes" ] && warn "systemd not found, cannot install the service"
         return 0
@@ -372,9 +468,40 @@ unpack_tarball() {
     chmod 0755 "$PREFIX"
 
     mkdir -p "$DATA_DIR/containerd" "$DATA_DIR/nerdctl" "$DATA_DIR/log" "$RUN_DIR"
+    retarget_tree
     # No snapshotter retargeting: the tarball's configs default brig to overlayfs
     # and keep devmapper configured in containerd, so CONTAINERD_SNAPSHOTTER=devmapper
     # switches at runtime without rewriting anything.
+}
+
+# Move the tree's idea of where it lives. The generated wrappers, configs and
+# units carry the build layout as literal paths; no binary does. The grep at the
+# end is what keeps that true: a tenth file added upstream fails the install
+# here instead of half-working on the host.
+retarget_tree() {
+    b_prefix="$(awk -F= '$1 == "PREFIX" {print $2}' "$PINS" 2>/dev/null)"
+    b_data="$(awk -F= '$1 == "DATA_DIR" {print $2}' "$PINS" 2>/dev/null)"
+    b_run="$(awk -F= '$1 == "RUN_DIR" {print $2}' "$PINS" 2>/dev/null)"
+    # Bundles built before pins.env recorded the layout used the default one.
+    [ -n "$b_prefix" ] || b_prefix="$BUILD_PREFIX"
+    [ -n "$b_data" ] || b_data="$BUILD_DATA_DIR"
+    [ -n "$b_run" ] || b_run="$BUILD_RUN_DIR"
+
+    if [ "$b_prefix" = "$PREFIX" ] && [ "$b_data" = "$DATA_DIR" ] && [ "$b_run" = "$RUN_DIR" ]; then
+        return 0
+    fi
+
+    grep -rIl -e "$b_prefix" -e "$b_data" -e "$b_run" "$BIN_DIR" "$ETC_DIR" 2>/dev/null \
+        | while read -r f; do
+            sed -i "s|$b_data|$DATA_DIR|g; s|$b_prefix|$PREFIX|g; s|$b_run|$RUN_DIR|g" "$f" \
+                || fatal "could not retarget $f"
+            say "retargeted ${f#"$PREFIX/"}"
+        done
+
+    left="$(grep -rIl -e "$b_prefix" -e "$b_data" -e "$b_run" "$BIN_DIR" "$ETC_DIR" 2>/dev/null || true)"
+    [ -z "$left" ] || fatal "retargeting left the build layout behind in:
+    $left"
+    say "retargeted the tree from $b_prefix to $PREFIX"
 }
 
 # ---------------------------------------------------------------- group
@@ -382,6 +509,12 @@ unpack_tarball() {
 # The brig group owns the private containerd socket, so a non-root user can drive
 # the stack. The systemd unit chgrps the socket to this group by name.
 setup_group() {
+    # Nothing owns the socket but this user: it lives in their runtime dir.
+    if [ "$INSTALL_MODE" = "user" ]; then
+        say "user install, not creating a group"
+        return 0
+    fi
+
     GROUP_CREATED=false
     command -v getent >/dev/null 2>&1 || { warn "getent not found, cannot manage the $BRIG_GROUP group"; return 0; }
     if getent group "$BRIG_GROUP" >/dev/null 2>&1; then
@@ -474,6 +607,12 @@ host_integration() {
     # /etc/urunc/config.toml is a hardcoded constant in urunc.
     ETC_SYMLINK_CREATED=false
     ETC_SYMLINK_BACKUP=""
+    # A user install cannot write /etc, and does not need to: the user unit
+    # passes URUNC_CONFIG_FILE, which the shim inherits from containerd.
+    if [ "$INSTALL_MODE" = "user" ]; then
+        write_launchers
+        return 0
+    fi
     target="/etc/urunc/config.toml"
     mkdir -p /etc/urunc
     if [ -L "$target" ] && [ "$(readlink "$target")" = "$ETC_DIR/urunc.toml" ]; then
@@ -490,18 +629,22 @@ host_integration() {
         ETC_SYMLINK_CREATED=true
     fi
 
-    # brig and brigd launchers: source the env, then exec the real binary. Kept
-    # off the tree so `brig` is on a normal PATH while the tree stays relocatable.
-    mkdir -p /usr/local/bin
+    write_launchers
+}
+
+# brig and brigd launchers: source the env, then exec the real binary. Kept off
+# the tree so `brig` is on a normal PATH while the tree stays relocatable.
+write_launchers() {
+    mkdir -p "$LAUNCH_DIR"
     for prog in brig brigd; do
         [ -x "$BIN_DIR/$prog" ] || continue
-        cat > "/usr/local/bin/$prog" <<LAUNCH
+        cat > "$LAUNCH_DIR/$prog" <<LAUNCH
 #!/bin/sh
 # brig launcher, generated by install.sh.
 [ -f "$ETC_DIR/brig-env.sh" ] && . "$ETC_DIR/brig-env.sh"
 exec "$BIN_DIR/$prog" "\$@"
 LAUNCH
-        chmod 0755 "/usr/local/bin/$prog"
+        chmod 0755 "$LAUNCH_DIR/$prog"
     done
 }
 
@@ -510,6 +653,7 @@ LAUNCH
 write_stamp() {
     cat > "$STAMP" <<STAMPEOF
 # What this install created. The uninstaller removes exactly this. Generated.
+INSTALL_MODE=$INSTALL_MODE
 PREFIX=$PREFIX
 DATA_DIR=$DATA_DIR
 RUN_DIR=$RUN_DIR
@@ -526,9 +670,9 @@ POOL_LOOP_DATA=$POOL_LOOP_DATA
 POOL_LOOP_META=$POOL_LOOP_META
 BRIG_GROUP=$BRIG_GROUP
 GROUP_CREATED=${GROUP_CREATED:-false}
-BRIG_LAUNCHER=/usr/local/bin/brig
-BRIGD_LAUNCHER=/usr/local/bin/brigd
-ETC_SYMLINK=/etc/urunc/config.toml
+BRIG_LAUNCHER=$LAUNCH_DIR/brig
+BRIGD_LAUNCHER=$LAUNCH_DIR/brigd
+ETC_SYMLINK=$([ "$INSTALL_MODE" = "user" ] && echo "" || echo "/etc/urunc/config.toml")
 ETC_SYMLINK_CREATED=$ETC_SYMLINK_CREATED
 ETC_SYMLINK_BACKUP=$ETC_SYMLINK_BACKUP
 STAMPEOF
@@ -564,6 +708,17 @@ start_stack() {
         say "INSTALL_BRIG_SKIP_START is set, not starting containerd"
         return 0
     fi
+    # A user install's daemon is rootless containerd under a systemd --user
+    # unit. brig-rootless-setup.sh writes that unit and starts it, and is also
+    # what a second user on a shared system install runs, so the per-user work
+    # lives there and not here.
+    if [ "$INSTALL_MODE" = "user" ]; then
+        [ -x "$BIN_DIR/brig-rootless-setup.sh" ] \
+            || fatal "the tarball carries no brig-rootless-setup.sh"
+        _break_bar
+        "$BIN_DIR/brig-rootless-setup.sh" || fatal "the rootless setup failed"
+        return 0
+    fi
     if [ "$INSTALL_SYSTEMD" != "true" ]; then
         say "no systemd service; start containerd yourself:"
         say "  $BIN_DIR/containerd --config $ETC_DIR/containerd.toml"
@@ -594,14 +749,23 @@ start_stack() {
 # ---------------------------------------------------------------- main
 
 main() {
-    case "${1:-}" in
-        --help|-h) usage; exit 0 ;;
-        --verbose|-v) INSTALL_BRIG_VERBOSE=true ;;
-        --quiet|-q) INSTALL_BRIG_VERBOSE=false ;;
-    esac
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --help|-h) usage; exit 0 ;;
+            --verbose|-v) INSTALL_BRIG_VERBOSE=true ;;
+            --quiet|-q) INSTALL_BRIG_VERBOSE=false ;;
+            --system) INSTALL_MODE=system ;;
+            --user) INSTALL_MODE=user ;;
+            *) fatal "unknown option: $1 (see --help)" ;;
+        esac
+        shift
+    done
 
     setup_env
     verify_system
+    if [ "$INSTALL_MODE" = "user" ]; then
+        verify_rootless_prereqs
+    fi
     verify_root_dir
     ask_systemd
 
@@ -623,17 +787,26 @@ main() {
 
     ver="$(awk -F= '$1 == "BUNDLE_VERSION" {print $2}' "$PINS" 2>/dev/null)"
     grp_note=""
-    getent group "$BRIG_GROUP" >/dev/null 2>&1 \
-        && grp_note="  group:     $BRIG_GROUP owns the socket, which is not enough to run
+    start_note="  started:   $SERVICE_NAME.service"
+    if [ "$INSTALL_MODE" = "user" ]; then
+        start_note="  started:   brig-containerd.service (systemd --user)"
+        case ":$PATH:" in
+            *":$LAUNCH_DIR:"*) ;;
+            *) grp_note="  path:      $LAUNCH_DIR is not on your PATH; add it to run brig by name
+" ;;
+        esac
+    else
+        getent group "$BRIG_GROUP" >/dev/null 2>&1 \
+            && grp_note="  group:     $BRIG_GROUP owns the socket, which is not enough to run
              brig as a normal user: see docs/rootless.md, or run
              $BIN_DIR/brig-ctl rootless as that user
 "
-    start_note="  started:   $SERVICE_NAME.service"
-    [ "$INSTALL_SYSTEMD" = "true" ] || start_note="  not started: no systemd service was installed"
+        [ "$INSTALL_SYSTEMD" = "true" ] || start_note="  not started: no systemd service was installed"
+    fi
 
     cat >&2 <<DONE
 
-[brig-install] brig ${ver:-installed} is installed
+[brig-install] brig ${ver:-installed} is installed ($INSTALL_MODE)
 
   prefix:    $PREFIX
   state:     $DATA_DIR

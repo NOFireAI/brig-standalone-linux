@@ -568,11 +568,18 @@ for arg in "$@"; do
     esac
 done
 
-[ "$(id -u)" -eq 0 ] || fatal "run this as root"
 [ -f "$STAMP" ] || fatal "no install stamp at $STAMP, refusing to remove anything"
 
 # shellcheck disable=SC1090
 . "$STAMP"
+
+# A user install owns nothing outside $HOME, so it comes down without root.
+if [ "${INSTALL_MODE:-system}" = "user" ]; then
+    [ "$(id -u)" -ne 0 ] \
+        || fatal "this install belongs to a user; run the uninstaller as that user"
+else
+    [ "$(id -u)" -eq 0 ] || fatal "run this as root"
+fi
 
 [ "$PREFIX" = "$PREFIX_GUESS" ] || fatal "stamp says $PREFIX but this script lives under $PREFIX_GUESS"
 
@@ -593,6 +600,14 @@ if [ "${SYSTEMD_INSTALLED:-false}" = "true" ] && command -v systemctl >/dev/null
     systemctl daemon-reload || true
     systemctl reset-failed >/dev/null 2>&1 || true
     info "stopped and disabled the units"
+fi
+
+if [ "${INSTALL_MODE:-system}" = "user" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl --user stop brig-containerd.service >/dev/null 2>&1 || true
+    systemctl --user disable brig-containerd.service >/dev/null 2>&1 || true
+    rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/brig-containerd.service"
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    info "stopped and disabled the rootless containerd unit"
 fi
 
 pkill -f "containerd --config $PREFIX/etc/containerd.toml" 2>/dev/null || true
@@ -659,7 +674,8 @@ for l in "${BRIG_LAUNCHER:-}" "${BRIGD_LAUNCHER:-}"; do
     fi
 done
 
-if [ -n "${BRIDGE_NAME:-}" ] && ip link show "$BRIDGE_NAME" >/dev/null 2>&1; then
+if [ "${INSTALL_MODE:-system}" != "user" ] \
+    && [ -n "${BRIDGE_NAME:-}" ] && ip link show "$BRIDGE_NAME" >/dev/null 2>&1; then
     ip link set "$BRIDGE_NAME" down 2>/dev/null || true
     ip link delete "$BRIDGE_NAME" 2>/dev/null || true
     info "removed the CNI bridge $BRIDGE_NAME"
@@ -683,6 +699,14 @@ if [ "$KEEP_DATA" = "true" ]; then
 else
     rm -rf "${DATA_DIR:?}"
     info "removed $DATA_DIR"
+fi
+
+# brig-rootless-setup.sh writes the per-user config and containerd's data root
+# outside the bundle, so a user install is only fully gone once those are too.
+if [ "${INSTALL_MODE:-system}" = "user" ] && [ "$KEEP_DATA" != "true" ]; then
+    rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/brig"
+    rm -rf "$(dirname "${PREFIX:?}")/nerdctl"
+    info "removed the per-user brig config and containerd data root"
 fi
 
 # data/ and agent/ are siblings under one root; drop it once both are gone. This
@@ -1210,6 +1234,9 @@ URUNIT_REPO=$([ "$VARIANT" = "stock" ] && echo "" || echo "$URUNIT_REPO")
 URUNIT_BRANCH=$([ "$VARIANT" = "stock" ] && echo "" || echo "$URUNIT_BRANCH")
 URUNIT_REF=$URUNIT_REF
 INITRD_SOURCE=$([ "$VARIANT" = "stock" ] && echo "" || echo "built:$URUNC_REF")
+PREFIX=$PREFIX
+DATA_DIR=$DATA_DIR
+RUN_DIR=$RUN_DIR
 ROOTLESSKIT_VERSION=$ROOTLESSKIT_VERSION
 SLIRP4NETNS_VERSION=$SLIRP4NETNS_VERSION
 MONITORS_VERSION=$MONITORS_VERSION
