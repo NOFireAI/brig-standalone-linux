@@ -1,9 +1,25 @@
 # Running brig without root
 
-The install is root's: one tree under `/var/lib/brig`, a containerd on
-`/run/brig/containerd.sock`, launchers in `/usr/local/bin`. Running brig does
-not have to be. `brig-ctl rootless` gives the invoking user a containerd of
-their own, and from then on `brig run`, `brig sh` and the rest need no sudo.
+A default install is root's: one tree under `/var/lib/brig`, a containerd on
+`/run/brig/containerd.sock`, launchers in `/usr/local/bin`, and only root can
+drive it. Running brig does not have to be root's, and there are two ways out.
+
+The rootless path is a build-time option, so it is a second bundle rather than
+something every install carries. A node that only runs brig as root ships none
+of it.
+
+| bundle | `install.sh` | result |
+| --- | --- | --- |
+| `brig-standalone-<v>-linux-<arch>` | as root, no flags | the default: root only |
+| `...-rootless-linux-<arch>` | as root, `--rootless` | root, plus `brig-ctl rootless` for each user who wants it |
+| `...-rootless-linux-<arch>` | as any user | everything under `$HOME`, that user only |
+
+`install.sh` fetches the right one: the rootless bundle when you pass
+`--rootless` or run it unprivileged, the plain one otherwise. A user install
+against a plain bundle is refused rather than laid down half-working, since the
+rootless path lives in the bundle and not in the installer.
+
+On a machine where root installed the rootless bundle, each user opts in once:
 
 ```console
 $ brig-ctl rootless
@@ -88,8 +104,9 @@ monitor is the host-side process that boots it.
 ## Installing into a home directory
 
 `install.sh --user` puts the whole thing under `$HOME` and touches nothing
-else. It is what a non-root caller gets by default, so on a machine where you
-have no root at all:
+else. It is what a non-root caller gets by default, and it needs the rootless
+bundle, which the installer selects on its own. On a machine where you have no
+root at all:
 
 ```console
 $ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/main/install.sh | sh -

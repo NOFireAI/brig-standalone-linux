@@ -148,20 +148,25 @@ otherwise fetch assets on first use, and here they are already in place.
 The `brig` group owns the socket, but that is not enough to run brig as a normal
 user. nerdctl decides whether it is rootless from its own euid, and a rootless
 nerdctl enters a user namespace that drops supplementary groups, so the group
-never arrives. A non-root user gets a containerd of their own instead:
+never arrives. A non-root user needs a containerd of their own.
+
+Each release carries two bundles, and that gives three ways to install:
+
+| install | run it as | bundle | who can then run brig |
+| --- | --- | --- | --- |
+| node, default | root | `brig-standalone-<v>-linux-<arch>` | root |
+| node, rootless-capable | root, with `--rootless` | `...-rootless-linux-<arch>` | root, and any user who runs `brig-ctl rootless` |
+| home | any user | `...-rootless-linux-<arch>` | that user, with nothing outside `$HOME` touched |
+
+The default is the first row and is unchanged: the plain bundle carries no
+rootless path at all, so a node that only ever runs brig as root ships none of
+it. `install.sh` picks the bundle for you -- the rootless one when you pass
+`--rootless` or install as a user, the plain one otherwise.
 
 ```console
-$ brig-ctl rootless
-$ brig run claude ~/code/demo
-```
-
-Or skip root entirely. Run `install.sh` as a normal user and it installs into
-`~/.local/share/brig`, with the launchers in `~/.local/bin`, and starts the
-rootless daemon for you:
-
-```console
-$ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/main/install.sh | sh -
-$ ~/.local/bin/brig run claude ~/code/demo
+$ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/main/install.sh | sudo sh -            # node, default
+$ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/main/install.sh | sudo sh -s -- --rootless   # node, then brig-ctl rootless per user
+$ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/main/install.sh | sh -                 # home install
 ```
 
 [docs/rootless.md](docs/rootless.md) has the detail, including the two things

@@ -137,6 +137,9 @@ nothing.
   INSTALL_BRIG_BUNDLE         a local tarball (or URL) to install instead of
                               fetching the release
   INSTALL_BRIG_MODE           system | user (default: user unless root)
+  INSTALL_BRIG_ROOTLESS       true to install the rootless bundle, which lets
+                              any user of a system install run brig-ctl
+                              rootless. Implied by a user install
   INSTALL_BRIG_GROUP          unix group granted the socket (default: brig)
   INSTALL_BRIG_USER           user added to that group (default: $SUDO_USER)
   INSTALL_BRIG_SYSTEMD        ask | yes | no. Install the systemd service?
@@ -144,6 +147,8 @@ nothing.
   INSTALL_BRIG_VERBOSE        true for a line per stage (default: false, quiet)
   INSTALL_BRIG_SKIP_START     true to lay the tree down without starting it
   INSTALL_BRIG_SKIP_SIGCHECK  true to install a remote tarball unverified
+  INSTALL_BRIG_REQUIRE_SIGCHECK  true to refuse unless the cosign signature
+                              over checksums.txt verifies
   INSTALL_BRIG_FORCE          true to take over a /var/lib/brig/data we did not create
   INSTALL_BRIG_SNAPSHOTTER    set to overlayfs to skip devmapper pool setup
                               (brig defaults to overlayfs; export
@@ -169,8 +174,15 @@ setup_env() {
     SYSTEMD_CHOICE="${INSTALL_BRIG_SYSTEMD:-ask}"
 
     case "${INSTALL_BRIG_VERBOSE:-false}" in true|1) VERBOSE=true ;; esac
+    # A user install is the rootless path, so it implies the rootless bundle.
+    WANT_ROOTLESS="${INSTALL_BRIG_ROOTLESS:-false}"
+    [ "$INSTALL_MODE" = "user" ] && WANT_ROOTLESS=true
+
     SKIP_START="${INSTALL_BRIG_SKIP_START:-false}"
     SKIP_SIGCHECK="${INSTALL_BRIG_SKIP_SIGCHECK:-false}"
+    # For a caller that installs cosign first and wants the signature to be
+    # load-bearing rather than best-effort.
+    REQUIRE_SIGCHECK="${INSTALL_BRIG_REQUIRE_SIGCHECK:-false}"
     FORCE="${INSTALL_BRIG_FORCE:-false}"
 
     # brig uses overlayfs by default; a user switches at runtime by exporting
@@ -383,7 +395,14 @@ fetch_tarball() {
     case "$BUNDLE" in
         "")
             resolve_release_version
-            ARCHIVE="brig-standalone-$RELEASE_RESOLVED-linux-$ARCH.tar.gz"
+            # Two artifacts per release. A user install needs the rootless
+            # one, and a root install takes it only when asked, so a node
+            # keeps the smaller bundle by default.
+            if [ "$WANT_ROOTLESS" = "true" ]; then
+                ARCHIVE="brig-standalone-$RELEASE_RESOLVED-rootless-linux-$ARCH.tar.gz"
+            else
+                ARCHIVE="brig-standalone-$RELEASE_RESOLVED-linux-$ARCH.tar.gz"
+            fi
             base="$GITHUB/$RELEASE_REPO/releases/download/$RELEASE_RESOLVED"
             say "fetching $ARCHIVE from $RELEASE_REPO ($RELEASE_RESOLVED)"
             _break_bar
@@ -412,22 +431,32 @@ verify_tarball() {
         warn "INSTALL_BRIG_SKIP_SIGCHECK is set, not verifying the tarball"
         return 0
     fi
+    # Installing an unlisted tarball is the one outcome this function exists to
+    # prevent, so a missing checksums.txt stops the install. Setting
+    # INSTALL_BRIG_SKIP_SIGCHECK above is the way to say that is wanted.
     fetch_quiet "$base/checksums.txt" "$TMP_DIR/checksums.txt" \
-        || { warn "no checksums.txt next to the tarball, cannot verify"; return 0; }
+        || fatal "no checksums.txt next to the tarball, cannot verify it.
+    Set INSTALL_BRIG_SKIP_SIGCHECK=true to install it unverified anyway."
 
     if command -v cosign >/dev/null 2>&1 \
        && fetch_quiet "$base/checksums.txt.pem" "$TMP_DIR/checksums.txt.pem" \
        && fetch_quiet "$base/checksums.txt.sig" "$TMP_DIR/checksums.txt.sig"; then
-        if cosign verify-blob \
+        # A signature that fails is not a signature that is absent. The first
+        # says the bytes or the identity are wrong and is fatal; only the second
+        # degrades to the hash.
+        cosign verify-blob \
             --certificate "$TMP_DIR/checksums.txt.pem" \
             --signature "$TMP_DIR/checksums.txt.sig" \
             --certificate-identity-regexp "$SIG_IDENTITY_REGEXP" \
             --certificate-oidc-issuer "$SIG_OIDC_ISSUER" \
-            "$TMP_DIR/checksums.txt" >/dev/null 2>&1; then
-            say "checksums.txt signature verified"
-        else
-            warn "could not verify the checksums.txt signature, checking the hash only"
-        fi
+            "$TMP_DIR/checksums.txt" >/dev/null 2>&1 \
+            || fatal "the checksums.txt signature did not verify against
+    $SIG_IDENTITY_REGEXP
+    This is what a tampered or mis-signed release looks like. Refusing."
+        say "checksums.txt signature verified"
+    elif [ "$REQUIRE_SIGCHECK" = "true" ]; then
+        fatal "INSTALL_BRIG_REQUIRE_SIGCHECK is set and the signature could not be
+    checked: cosign is missing, or the release carries no .sig and .pem."
     else
         say "cosign not present, checking the hash only"
     fi
@@ -450,6 +479,17 @@ unpack_tarball() {
     root="$(find "$TMP_DIR/x" -mindepth 1 -maxdepth 1 -type d | head -1)"
     { [ -n "$root" ] && [ -d "$root/bin" ]; } || fatal "the tarball does not look like a brig tree"
     [ -f "$root/pins.env" ] || fatal "the tarball has no pins.env"
+
+    # The rootless path lives in the bundle, not in this script, so a user
+    # install on a bundle built without it would lay down a tree with no
+    # brig-rootless-setup.sh and no rootlesskit and fail at the last stage.
+    # Read it from the staged tree, before anything is moved into place: a
+    # refusal here leaves an existing install untouched.
+    BUNDLE_ROOTLESS="$(awk -F= '$1 == "ROOTLESS" {print $2}' "$root/pins.env")"
+    if [ "$INSTALL_MODE" = "user" ] && [ "$BUNDLE_ROOTLESS" != "true" ]; then
+        fatal "this bundle carries no rootless path, so it cannot serve a user install.
+    Install a brig-standalone-*-rootless-* bundle, or run as root for a system install."
+    fi
 
     a_arch="$(awk -F= '$1 == "ARCH" {print $2}' "$root/pins.env")"
     [ -z "$a_arch" ] || [ "$a_arch" = "$ARCH" ] \
@@ -756,6 +796,7 @@ main() {
             --quiet|-q) INSTALL_BRIG_VERBOSE=false ;;
             --system) INSTALL_MODE=system ;;
             --user) INSTALL_MODE=user ;;
+            --rootless) INSTALL_BRIG_ROOTLESS=true ;;
             *) fatal "unknown option: $1 (see --help)" ;;
         esac
         shift
@@ -796,11 +837,19 @@ main() {
 " ;;
         esac
     else
-        getent group "$BRIG_GROUP" >/dev/null 2>&1 \
-            && grp_note="  group:     $BRIG_GROUP owns the socket, which is not enough to run
+        if getent group "$BRIG_GROUP" >/dev/null 2>&1; then
+            if [ "$BUNDLE_ROOTLESS" = "true" ]; then
+                grp_note="  group:     $BRIG_GROUP owns the socket, which is not enough to run
              brig as a normal user: see docs/rootless.md, or run
              $BIN_DIR/brig-ctl rootless as that user
 "
+            else
+                grp_note="  group:     $BRIG_GROUP owns the socket, which is not enough to run
+             brig as a normal user, and this bundle carries no rootless
+             path. Install a -rootless bundle for that: docs/rootless.md
+"
+            fi
+        fi
         [ "$INSTALL_SYSTEMD" = "true" ] || start_note="  not started: no systemd service was installed"
     fi
 

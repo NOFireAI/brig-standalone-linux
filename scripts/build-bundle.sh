@@ -17,6 +17,11 @@
 #   scripts/build-bundle.sh --arch amd64 --version v0.1.0 --out dist
 #   scripts/build-bundle.sh --arch arm64 --version v0.1.0 --variant generic-boot
 #
+# --rootless adds the rootless path: rootlesskit, slirp4netns, nerdctl's two
+# rootless launchers and brig-rootless-setup.sh. It is a separate artifact
+# because a node install driven by root never uses any of it, and a user
+# install cannot work without it.
+#
 # docker is required (the urunc/urunit builds run in containers). Building the
 # arm64 pieces on an amd64 runner (or vice versa) needs binfmt/qemu registered,
 # because the static urunc binary and urunit are CGO/C and are built native
@@ -25,6 +30,8 @@
 # Produces, under --out:
 #   brig-standalone-<version>-linux-<arch>.tar.gz          (the install tarball)
 #   brig-standalone-<version>-linux-<arch>.pins.env        (the version manifest)
+#
+# and with --rootless, the same two named brig-standalone-<version>-rootless-*.
 
 set -eu
 
@@ -40,6 +47,10 @@ VERSION=""
 OUT="$REPO_DIR/dist"
 VARIANT="generic-boot"
 URUNC_VERSION_STOCK=""   # only for --variant stock: a released urunc tag
+# Off by default: a node install driven by root never runs the rootless path,
+# and shipping it costs ~39MB and four binaries that would go unused. --rootless
+# builds the second artifact, which is the one a user install needs.
+ROOTLESS=false
 
 info() { echo "[build-bundle] $*" >&2; }
 fatal() { echo "[build-bundle] ERROR: $*" >&2; exit 1; }
@@ -50,6 +61,7 @@ while [ $# -gt 0 ]; do
         --version) VERSION="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
         --variant) VARIANT="$2"; shift 2 ;;
+        --rootless) ROOTLESS=true; shift ;;
         --urunc-version) URUNC_VERSION_STOCK="$2"; shift 2 ;;
         --help|-h) sed -n '2,30p' "$0"; exit 0 ;;
         *) fatal "unknown argument '$1'" ;;
@@ -147,6 +159,7 @@ BRIG_GROUP=brig
 
 GITHUB="https://github.com"
 NAME="brig-standalone-$VERSION-linux-$ARCH"
+[ "$ROOTLESS" = true ] && NAME="brig-standalone-$VERSION-rootless-linux-$ARCH"
 TMP_DIR="$(mktemp -d)"
 # The urunc/urunit/initrd builds run in docker as root and leave root-owned files
 # (vendored deps, dist/, apt caches) under TMP_DIR. A non-root builder -- a CI
@@ -182,8 +195,28 @@ NERDCTL_TOML="$ETC_DIR/nerdctl.toml"
 CNI_PATH="$CNI_DIR"
 SERVICE_NAME="$SERVICE_NAME"
 BRIG_ENV="$ETC_DIR/brig-env.sh"
+ROOTLESS=$ROOTLESS
 CTLENV
     cat >> "$STAGE/bin/brig-ctl" <<'CTLBODY'
+# brig-ctl carries the prefix it was built for, so a copy run straight out of
+# an unpacked tarball drives whatever install sits at that path instead of the
+# tree it was run from -- which silently repoints a live rootless setup.
+# brig-uninstall.sh guards the same way. $0 without a slash came off PATH, and
+# an unresolvable one is left alone rather than guessed at.
+self="$0"
+case "$self" in
+    */*) ;;
+    *) self="$(command -v -- "$self" 2>/dev/null || echo "")" ;;
+esac
+if [ -n "$self" ]; then
+    self_prefix="$(cd "$(dirname -- "$self")/.." 2>/dev/null && pwd || echo "")"
+    if [ -n "$self_prefix" ] && [ "$self_prefix" != "$PREFIX" ]; then
+        echo "brig-ctl: this copy was built for $PREFIX but runs from $self_prefix." >&2
+        echo "brig-ctl: use $PREFIX/bin/brig-ctl, or install this tree first." >&2
+        exit 1
+    fi
+fi
+
 export CONTAINERD_ADDRESS CONTAINERD_NAMESPACE CONTAINERD_SNAPSHOTTER NERDCTL_TOML CNI_PATH
 PATH="$PREFIX/bin:$PATH"
 export PATH
@@ -212,6 +245,11 @@ case "$cmd" in
         "$PREFIX/bin/ctr" --address "$CONTAINERD_ADDRESS" plugin ls 2>/dev/null \
             | awk 'NR==1 || /snapshotter/ || /urunc/' ;;
     rootless)
+        if [ "$ROOTLESS" != true ]; then
+            echo "brig-ctl: this bundle was built without rootless support." >&2
+            echo "brig-ctl: install a brig-standalone-*-rootless-* bundle instead." >&2
+            exit 1
+        fi
         exec "$PREFIX/bin/brig-rootless-setup.sh" "$@" ;;
     uninstall)
         exec "$PREFIX/bin/brig-uninstall.sh" "$@" ;;
@@ -222,7 +260,7 @@ brig-ctl <command> [args]
   ctr [args]        ctr against the private containerd
   nerdctl [args]    nerdctl against the private containerd
   run <image>       nerdctl run with the urunc runtime and snapshotter
-  rootless          set this user up to run brig without sudo
+  rootless          set this user up to run brig without sudo (rootless bundles)
   env               shell exports for driving the stack by hand
   status            service state and the relevant containerd plugins
   version           the bundled component versions
@@ -889,34 +927,42 @@ fetch "$GITHUB/containernetworking/plugins/releases/download/$CNI_VERSION/$cni_n
 verify "$DL/cni.tgz" \
     "$GITHUB/containernetworking/plugins/releases/download/$CNI_VERSION/$cni_name.sha256" "$cni_name"
 
-rk_name="rootlesskit-$ARCH_UNAME.tar.gz"
-fetch "$GITHUB/rootless-containers/rootlesskit/releases/download/$ROOTLESSKIT_VERSION/$rk_name" "$DL/rootlesskit.tar.gz"
-verify "$DL/rootlesskit.tar.gz" \
-    "$GITHUB/rootless-containers/rootlesskit/releases/download/$ROOTLESSKIT_VERSION/SHA256SUMS" "$rk_name"
+if [ "$ROOTLESS" = true ]; then
+    rk_name="rootlesskit-$ARCH_UNAME.tar.gz"
+    fetch "$GITHUB/rootless-containers/rootlesskit/releases/download/$ROOTLESSKIT_VERSION/$rk_name" "$DL/rootlesskit.tar.gz"
+    verify "$DL/rootlesskit.tar.gz" \
+        "$GITHUB/rootless-containers/rootlesskit/releases/download/$ROOTLESSKIT_VERSION/SHA256SUMS" "$rk_name"
 
-# slirp4netns ships a bare binary and no sums file; verify records the hash.
-s4_name="slirp4netns-$ARCH_UNAME"
-fetch "$GITHUB/rootless-containers/slirp4netns/releases/download/$SLIRP4NETNS_VERSION/$s4_name" "$DL/slirp4netns"
-verify "$DL/slirp4netns" "" "$s4_name"
+    # slirp4netns ships a bare binary and no sums file; verify records the hash.
+    s4_name="slirp4netns-$ARCH_UNAME"
+    fetch "$GITHUB/rootless-containers/slirp4netns/releases/download/$SLIRP4NETNS_VERSION/$s4_name" "$DL/slirp4netns"
+    verify "$DL/slirp4netns" "" "$s4_name"
+fi
 
 info "laying out the tree"
 install -m 0755 "$DL/urunc" "$STAGE/bin/urunc"
 install -m 0755 "$DL/containerd-shim-urunc-v2" "$STAGE/bin/containerd-shim-urunc-v2"
 install -m 0755 "$DL/runc" "$STAGE/bin/runc"
 tar -xzf "$DL/containerd.tar.gz" -C "$STAGE" bin/
-# nerdctl's tarball carries the two rootless launchers beside the binary, so
-# they arrive already covered by the checksum verified above.
-tar -xzf "$DL/nerdctl.tar.gz" -C "$STAGE/bin" \
-    nerdctl containerd-rootless.sh containerd-rootless-setuptool.sh
-chmod 0755 "$STAGE/bin/containerd-rootless.sh" "$STAGE/bin/containerd-rootless-setuptool.sh"
+if [ "$ROOTLESS" = true ]; then
+    # nerdctl's tarball carries the two rootless launchers beside the binary, so
+    # they arrive already covered by the checksum verified above.
+    tar -xzf "$DL/nerdctl.tar.gz" -C "$STAGE/bin" \
+        nerdctl containerd-rootless.sh containerd-rootless-setuptool.sh
+    chmod 0755 "$STAGE/bin/containerd-rootless.sh" "$STAGE/bin/containerd-rootless-setuptool.sh"
+else
+    tar -xzf "$DL/nerdctl.tar.gz" -C "$STAGE/bin" nerdctl
+fi
 tar -xzf "$DL/cni.tgz" -C "$STAGE/libexec/cni"
 
-# rootlesskit and slirp4netns are what containerd-rootless.sh shells out to.
-# rootlessctl comes along for debugging a live namespace; the docker proxy does
-# not, since nothing here speaks to dockerd.
-tar -xzf "$DL/rootlesskit.tar.gz" -C "$STAGE/bin" rootlesskit rootlessctl
-chmod 0755 "$STAGE/bin/rootlesskit" "$STAGE/bin/rootlessctl"
-install -m 0755 "$DL/slirp4netns" "$STAGE/bin/slirp4netns"
+if [ "$ROOTLESS" = true ]; then
+    # rootlesskit and slirp4netns are what containerd-rootless.sh shells out to.
+    # rootlessctl comes along for debugging a live namespace; the docker proxy
+    # does not, since nothing here speaks to dockerd.
+    tar -xzf "$DL/rootlesskit.tar.gz" -C "$STAGE/bin" rootlesskit rootlessctl
+    chmod 0755 "$STAGE/bin/rootlesskit" "$STAGE/bin/rootlessctl"
+    install -m 0755 "$DL/slirp4netns" "$STAGE/bin/slirp4netns"
+fi
 
 mkdir -p "$TMP_DIR/monitors"
 tar -xzf "$DL/monitors.tar.gz" -C "$TMP_DIR/monitors" --wildcards '*urunc/bin/*'
@@ -1117,15 +1163,17 @@ CNIEOF
 cat > "$STAGE/etc/brig-env.sh" <<CFG
 # brig environment, generated by build-bundle.sh. Source before running brig.
 #
+# Every value defers to one already in the environment, so a caller can point
+# a single knob elsewhere without editing this file.
+CFG
+if [ "$ROOTLESS" = true ]; then
+    cat >> "$STAGE/etc/brig-env.sh" <<CFG
 # Root drives the system stack. A non-root user cannot: nerdctl decides
 # rootless from its own euid, and a rootless nerdctl enters a user
 # namespace that drops supplementary groups, so membership of the
 # $BRIG_GROUP group buys nothing in there. A non-root user gets a containerd
 # of their own instead -- see brig-rootless-setup.sh -- and every path below
 # moves under their home to match.
-#
-# Every value defers to one already in the environment, so a caller can point
-# a single knob elsewhere without editing this file.
 if [ "\$(id -u)" -eq 0 ]; then
     export CONTAINERD_ADDRESS="\${CONTAINERD_ADDRESS:-unix://$CONTAINERD_SOCK}"
     export NERDCTL_TOML="\${NERDCTL_TOML:-$ETC_DIR/nerdctl.toml}"
@@ -1136,6 +1184,16 @@ else
     export CONTAINERD_ADDRESS="\${CONTAINERD_ADDRESS:-unix:///run/containerd/containerd.sock}"
     export NERDCTL_TOML="\${NERDCTL_TOML:-\${XDG_CONFIG_HOME:-\$HOME/.config}/brig/nerdctl.toml}"
 fi
+CFG
+else
+    cat >> "$STAGE/etc/brig-env.sh" <<CFG
+# This bundle carries no rootless path, so there is one layout: the system
+# stack, which only root can drive.
+export CONTAINERD_ADDRESS="\${CONTAINERD_ADDRESS:-unix://$CONTAINERD_SOCK}"
+export NERDCTL_TOML="\${NERDCTL_TOML:-$ETC_DIR/nerdctl.toml}"
+CFG
+fi
+cat >> "$STAGE/etc/brig-env.sh" <<CFG
 export CONTAINERD_NAMESPACE="\${CONTAINERD_NAMESPACE:-$NAMESPACE}"
 # brig's default snapshotter; export CONTAINERD_SNAPSHOTTER=devmapper to switch.
 # devmapper needs the system thin pool, so a rootless stack stays on overlayfs.
@@ -1215,7 +1273,7 @@ POOLUP
 chmod 0755 "$STAGE/bin/brig-pool-up"
 
 write_brig_ctl
-write_brig_rootless_setup
+[ "$ROOTLESS" = true ] && write_brig_rootless_setup
 write_uninstaller
 
 info "writing pins.env"
@@ -1237,8 +1295,9 @@ INITRD_SOURCE=$([ "$VARIANT" = "stock" ] && echo "" || echo "built:$URUNC_REF")
 PREFIX=$PREFIX
 DATA_DIR=$DATA_DIR
 RUN_DIR=$RUN_DIR
-ROOTLESSKIT_VERSION=$ROOTLESSKIT_VERSION
-SLIRP4NETNS_VERSION=$SLIRP4NETNS_VERSION
+ROOTLESS=$ROOTLESS
+ROOTLESSKIT_VERSION=$([ "$ROOTLESS" = true ] && echo "$ROOTLESSKIT_VERSION" || echo "")
+SLIRP4NETNS_VERSION=$([ "$ROOTLESS" = true ] && echo "$SLIRP4NETNS_VERSION" || echo "")
 MONITORS_VERSION=$MONITORS_VERSION
 MONITORS_INSTALLED="$MONITORS"
 VIRTIOFSD_INSTALLED=$VIRTIOFSD
