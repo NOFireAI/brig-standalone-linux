@@ -188,14 +188,26 @@ write_brig_ctl() {
 # brig-ctl: run ctr, nerdctl and friends against the private brig stack.
 set -eu
 PREFIX="$PREFIX"
-CONTAINERD_ADDRESS="$CONTAINERD_SOCK"
-CONTAINERD_NAMESPACE="$NAMESPACE"
-CONTAINERD_SNAPSHOTTER="\${CONTAINERD_SNAPSHOTTER:-$SNAPSHOTTER}"
-NERDCTL_TOML="$ETC_DIR/nerdctl.toml"
-CNI_PATH="$CNI_DIR"
 SERVICE_NAME="$SERVICE_NAME"
 BRIG_ENV="$ETC_DIR/brig-env.sh"
 ROOTLESS=$ROOTLESS
+
+# brig-env.sh is the one place that works out what the caller's euid means:
+# root drives the system stack, anyone else drives a rootless containerd whose
+# socket is inside the rootlesskit namespace and at a different path entirely.
+# Source it rather than answer that question again here. Repeating it is what
+# broke: a rootless install got handed the root socket path, and every nerdctl
+# and ctr call through this script failed on a socket that does not exist.
+if [ -f "\$BRIG_ENV" ]; then
+    . "\$BRIG_ENV"
+fi
+
+# What the bundle was built with, used only where brig-env.sh left a gap.
+CONTAINERD_ADDRESS="\${CONTAINERD_ADDRESS:-$CONTAINERD_SOCK}"
+CONTAINERD_NAMESPACE="\${CONTAINERD_NAMESPACE:-$NAMESPACE}"
+CONTAINERD_SNAPSHOTTER="\${CONTAINERD_SNAPSHOTTER:-$SNAPSHOTTER}"
+NERDCTL_TOML="\${NERDCTL_TOML:-$ETC_DIR/nerdctl.toml}"
+CNI_PATH="\${CNI_PATH:-$CNI_DIR}"
 CTLENV
     cat >> "$STAGE/bin/brig-ctl" <<'CTLBODY'
 # brig-ctl carries the prefix it was built for, so a copy run straight out of
@@ -238,8 +250,15 @@ case "$cmd" in
     version)
         cat "$PREFIX/pins.env" ;;
     status)
+        # A rootless install's daemon is a systemd --user unit, so asking the
+        # system manager about it answers "could not be found" on a stack that
+        # is running perfectly well.
         if command -v systemctl >/dev/null 2>&1; then
-            systemctl --no-pager status "$SERVICE_NAME.service" || true
+            if [ "$(id -u)" -eq 0 ]; then
+                systemctl --no-pager status "$SERVICE_NAME.service" || true
+            else
+                systemctl --user --no-pager status "$SERVICE_NAME.service" || true
+            fi
         fi
         echo
         "$PREFIX/bin/ctr" --address "$CONTAINERD_ADDRESS" plugin ls 2>/dev/null \
