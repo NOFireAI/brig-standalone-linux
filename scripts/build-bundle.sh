@@ -236,13 +236,34 @@ export CONTAINERD_ADDRESS CONTAINERD_NAMESPACE CONTAINERD_SNAPSHOTTER NERDCTL_TO
 PATH="$PREFIX/bin:$PATH"
 export PATH
 
+# ctr stats --address as a file path before it dials, so the unix:// scheme
+# brig-env.sh writes for nerdctl fails there on every install. A rootless
+# install's socket exists only inside the rootlesskit namespace. nerdctl enters
+# that namespace by itself and ctr does not, so ctr goes in through the nsenter
+# of the setup tool nerdctl ships. Rootless means what it means in brig-env.sh:
+# a rootless bundle and a caller who is not root.
+run_ctr() {
+    if [ "$ROOTLESS" = true ] && [ "$(id -u)" -ne 0 ]; then
+        XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+        export XDG_RUNTIME_DIR
+        if [ ! -f "$XDG_RUNTIME_DIR/containerd-rootless/child_pid" ]; then
+            echo "brig-ctl: no rootless containerd is running for $(id -un)." >&2
+            echo "brig-ctl: start it with: systemctl --user start $SERVICE_NAME.service" >&2
+            return 1
+        fi
+        "$PREFIX/bin/containerd-rootless-setuptool.sh" nsenter -- \
+            "$PREFIX/bin/ctr" --address "${CONTAINERD_ADDRESS#unix://}" "$@"
+    else
+        "$PREFIX/bin/ctr" --address "${CONTAINERD_ADDRESS#unix://}" "$@"
+    fi
+}
+
 cmd="${1:-help}"
 [ $# -gt 0 ] && shift
 
 case "$cmd" in
     ctr)
-        exec "$PREFIX/bin/ctr" --address "$CONTAINERD_ADDRESS" \
-            --namespace "$CONTAINERD_NAMESPACE" "$@" ;;
+        run_ctr --namespace "$CONTAINERD_NAMESPACE" "$@" ;;
     nerdctl)
         exec "$PREFIX/bin/nerdctl" "$@" ;;
     run)
@@ -264,8 +285,7 @@ case "$cmd" in
             fi
         fi
         echo
-        "$PREFIX/bin/ctr" --address "$CONTAINERD_ADDRESS" plugin ls 2>/dev/null \
-            | awk 'NR==1 || /snapshotter/ || /urunc/' ;;
+        run_ctr plugin ls 2>/dev/null | awk 'NR==1 || /snapshotter/ || /urunc/' ;;
     rootless)
         if [ "$ROOTLESS" != true ]; then
             echo "brig-ctl: this bundle was built without rootless support." >&2
