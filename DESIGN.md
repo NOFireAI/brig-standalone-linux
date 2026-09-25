@@ -34,13 +34,17 @@ now done and is what `install.sh` and `scripts/build-bundle.sh` produce.
   above are not configurable at install time.
 - **Why three things are built (at release).** Most components are upstream release
   artifacts. Three have no upstream release and are compiled in the build: urunc
-  (from `urunc-dev/urunc@feat/unchanged_containers`, CGO static, so native per arch
-  under qemu/binfmt), urunit (from `NOFireAI/urunit@urunit_agent`, C static), and
-  the brig `container-initrd`. brig execs into a guest through an in-guest agent
-  (`urunit-agent`) whose protocol must match the urunc shim, so hull-assets'
-  prebuilt initrd (hull's agent) is not usable; the build assembles a brig initrd
-  from urunit + `urunit-agent` (from the same urunc commit as the shim) + busybox +
-  urunc's `container-init`. The kernel is still fetched, not built: on amd64 from
+  (from `urunc-dev/urunc` at commit `0818ff1`, on
+  `feat/unchanged_containers-exec-fixes`, CGO static, so native per arch under
+  qemu/binfmt), urunit (from `NOFireAI/urunit` at commit `71bfdee`, on
+  `urunit_agent`, C static), and the brig `container-initrd`. The two sources are
+  pinned to a commit, not to a branch: a branch tip moves with every push, so it
+  is not a release input. The README's build section says how to move a pin.
+  brig execs into a guest through an in-guest agent (`urunit-agent`) whose
+  protocol must match the urunc shim, so hull-assets' prebuilt initrd (hull's
+  agent) is not usable; the build assembles a brig initrd from urunit +
+  `urunit-agent` (from the same urunc commit as the shim) + busybox + urunc's
+  `container-init`. The kernel is still fetched, not built: on amd64 from
   the bunny Cloud-Hypervisor kernel image
   (`harbor.nbfc.io/nubificus/bunny/linux-kernel-cloud-hypervisor`), on arm64 from
   `ghcr.io/nofireai/hull-assets`.
