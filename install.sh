@@ -254,60 +254,194 @@ verify_system() {
     command -v systemctl >/dev/null 2>&1 || HAVE_SYSTEMD=false
 }
 
-# What a user install cannot do for itself, in two classes. Nothing here can
-# fix the first, so the install stops; brig-rootless-setup.sh asks sudo for the
-# second, so those are reported and left to it. Each is a confusing failure
-# somewhere else if it goes unchecked: rootlesskit dies on its own re-exec
-# without the AppArmor profile, KVM_CREATE_VM returns EPERM without access to
-# the device, and newuidmap is setuid-root.
+# What a user install cannot do for itself, in three classes. Each is a
+# confusing failure somewhere else if it goes unchecked: rootlesskit dies on its
+# own re-exec without the AppArmor profile, KVM_CREATE_VM returns EPERM without
+# access to the device, and newuidmap is setuid-root.
+#
+#   - No root can fix a missing login session or systemd, so those stop the
+#     install.
+#   - Packages and a subuid range are root's, and brig-rootless-setup.sh does
+#     not make them, so those stop the install too.
+#   - The rest brig-rootless-setup.sh makes with sudo at the end of the
+#     install. Without a sudo that runs without a password, it would stop at a
+#     prompt after the whole bundle is downloaded and unpacked. So the install
+#     stops here instead.
+#
+# Whatever needs root is printed as one block of commands for this user and
+# this prefix. An admin runs it once, and the next install needs no sudo. The
+# checks and the commands mirror brig-rootless-setup.sh; keep them in step.
 verify_rootless_prereqs() {
+    me="$(id -un)"
     miss=""
-    once=""
+    need=""
+    setup_can=true
+    fix="$TMP_DIR/root-commands.sh"
+    : > "$fix"
+
     [ -d "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" ] \
         || miss="$miss\n  no ${XDG_RUNTIME_DIR:-/run/user/$(id -u)}: log in as this user first"
     [ "$HAVE_SYSTEMD" = "true" ] \
         || miss="$miss\n  no systemctl: a user install needs a systemd user session"
-    command -v newuidmap >/dev/null 2>&1 \
-        || miss="$miss\n  newuidmap is missing:  sudo apt install uidmap"
-    command -v setfacl >/dev/null 2>&1 \
-        || miss="$miss\n  setfacl is missing:  sudo apt install acl"
-    grep -q "^$(id -un):" /etc/subuid 2>/dev/null && grep -q "^$(id -un):" /etc/subgid 2>/dev/null \
-        || miss="$miss\n  no subuid range:  sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $(id -un)"
 
-    # Readable here is the wrong question. The monitor runs inside a user
-    # namespace where this user's supplementary groups are gone, so the kvm
-    # group that makes /dev/kvm openable at this prompt reaches nothing in
-    # there -- testing r/w passes on exactly the hosts that then fail to boot a
-    # sandbox. Look for what the setup actually grants: this user by name, or a
-    # mode that covers everyone.
-    for d in kvm vhost-vsock; do
-        [ -e "/dev/$d" ] || continue
-        getfacl -p "/dev/$d" 2>/dev/null | grep -q "^user:$(id -un):rw" && continue
-        [ "$(stat -c %a "/dev/$d" 2>/dev/null || echo 0)" = 666 ] && continue
-        once="$once\n  no access to /dev/$d from inside the user namespace"
-    done
+    pkgs=""
+    command -v newuidmap >/dev/null 2>&1 \
+        || { need="$need\n  newuidmap is missing"; pkgs="$pkgs uidmap"; }
+    command -v setfacl >/dev/null 2>&1 \
+        || { need="$need\n  setfacl is missing"; pkgs="$pkgs acl"; }
+    if [ -n "$pkgs" ]; then
+        setup_can=false
+        echo "DEBIAN_FRONTEND=noninteractive apt-get install -y$pkgs </dev/null" >> "$fix"
+    fi
+
+    # A range that overlaps another user's maps both users' containers onto the
+    # same host uids, so the range offered starts past every one handed out.
+    if ! grep -q "^$me:" /etc/subuid 2>/dev/null || ! grep -q "^$me:" /etc/subgid 2>/dev/null; then
+        setup_can=false
+        need="$need\n  no subuid range for $me"
+        first=$(cat /etc/subuid /etc/subgid 2>/dev/null \
+            | awk -F: '$2 + $3 > m {m = $2 + $3} END {print (m > 100000 ? m : 100000)}')
+        last=$((first + 65535))
+        echo "usermod --add-subuids $first-$last --add-subgids $first-$last $me" >> "$fix"
+    fi
 
     # The profile names the binary by path, so the one a /var/lib install left
     # behind does not cover a tree in $HOME.
     if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = "1" ] \
         && ! grep -rqsF "$BIN_DIR/rootlesskit" /etc/apparmor.d/ 2>/dev/null; then
-        once="$once\n  no AppArmor profile for $BIN_DIR/rootlesskit"
+        need="$need\n  no AppArmor profile for $BIN_DIR/rootlesskit"
+        profile="/etc/apparmor.d/$(printf '%s' "${BIN_DIR#/}/rootlesskit" | tr / .)"
+        cat >> "$fix" <<FIX
+cat > '$profile' <<'PROF'
+abi <abi/4.0>,
+include <tunables/global>
+
+$BIN_DIR/rootlesskit flags=(unconfined) {
+  userns,
+  include if exists <local/brig-rootlesskit>
+}
+PROF
+apparmor_parser -r '$profile'
+FIX
     fi
 
-    if [ -n "$miss" ]; then
-        # shellcheck disable=SC2059
-        printf "[brig-install] ERROR: this host is not set up for a rootless brig:$miss\n\n  See docs/rootless.md.\n" >&2
-        exit 1
+    # Readable here is the wrong question. The monitor runs inside a user
+    # namespace where this user's supplementary groups are gone, so the kvm
+    # group that makes /dev/kvm openable at this prompt reaches nothing in
+    # there -- testing r/w passes on exactly the hosts that then fail to boot a
+    # sandbox. Look for what the setup grants: this user by name, or a mode
+    # that covers everyone. A module that is not loaded has no device yet, and
+    # its device needs the grant once it has one.
+    grant=false
+    for d in kvm vhost-vsock; do
+        [ -e "/dev/$d" ] || continue
+        getfacl -p "/dev/$d" 2>/dev/null | grep -q "^user:$me:rw" && continue
+        [ "$(stat -c %a "/dev/$d" 2>/dev/null || echo 0)" = 666 ] && continue
+        need="$need\n  no access to /dev/$d from inside the user namespace"
+        grant=true
+    done
+    load=""
+    for m in kvm vhost_vsock; do
+        [ -d "/sys/module/$m" ] && continue
+        module_exists "$m" || continue
+        need="$need\n  the $m module is not loaded"
+        load="$load $m"
+        grant=true
+    done
+    if [ "$grant" = true ]; then
+        cat >> "$fix" <<FIX
+cat > /etc/udev/rules.d/99-brig-kvm-$me.rules <<'RULE'
+# brig: a rootless brig runs the VMM as the invoking user, inside a user
+# namespace that drops supplementary groups, so the kvm group never reaches
+# the monitor. Grant the user directly -- narrower than mode 0666, and
+# reapplied on every event for these devices, which a one-shot setfacl is not.
+# An image whose user is not root needs --open-devices instead.
+KERNEL=="kvm", SUBSYSTEM=="misc", MODE="0660", RUN+="/usr/bin/setfacl -m u:$me:rw /dev/kvm"
+KERNEL=="vhost-vsock", SUBSYSTEM=="misc", MODE="0660", RUN+="/usr/bin/setfacl -m u:$me:rw /dev/vhost-vsock"
+RULE
+udevadm control --reload-rules
+FIX
     fi
-    if [ -n "$once" ]; then
+    for m in $load; do
+        echo "modprobe $m" >> "$fix"
+    done
+    # vhost_vsock does not autoload, so the host is told to load it at boot.
+    case " $load " in *" vhost_vsock "*) vsock=true ;; *) vsock=false ;; esac
+    [ -d /sys/module/vhost_vsock ] && vsock=true
+    if [ "$vsock" = true ] && ! grep -qsx 'vhost_vsock' /etc/modules-load.d/*.conf /etc/modules; then
+        need="$need\n  vhost_vsock is not loaded at boot"
+        cat >> "$fix" <<'FIX'
+cat > /etc/modules-load.d/brig.conf <<'CONF'
+# brig: the vsock device the monitor gives the guest. Written by
+# brig-rootless-setup.sh; the matching udev rule grants access to it.
+vhost_vsock
+CONF
+FIX
+    fi
+    if [ "$grant" = true ]; then
+        cat >> "$fix" <<'FIX'
+udevadm trigger --subsystem-match=misc --sysname-match=kvm
+udevadm trigger --subsystem-match=misc --sysname-match=vhost-vsock
+udevadm settle --timeout=10 || true
+FIX
+    fi
+
+    # Anything an earlier sudo run left root-owned in this home stops an
+    # unprivileged brig, and the setup takes it back with sudo.
+    for d in "$HOME/brig" "$HOME/.brig" "$HOME/.sigstore" "${XDG_CONFIG_HOME:-$HOME/.config}/brig"; do
+        [ -e "$d" ] || continue
+        [ "$(stat -c %u "$d" 2>/dev/null || echo -1)" = "$(id -u)" ] && continue
+        need="$need\n  $d is not owned by $me"
+        echo "chown -R $(id -u):$(id -g) '$d'" >> "$fix"
+    done
+
+    if [ -z "$miss" ] && [ -z "$need" ]; then
+        return 0
+    fi
+    if [ -z "$miss" ] && [ "$setup_can" = true ] && sudo -n true 2>/dev/null; then
         # Counted, not assumed: this said "two" whatever it had found, which
         # reads as a second thing the reader has missed.
-        n=$(printf '%b' "$once" | grep -c '^  ')
+        n=$(printf '%b' "$need" | grep -c '^  ')
         if [ "$n" = 1 ]; then what="one host setting is"; else what="$n host settings are"; fi
         # shellcheck disable=SC2059
-        printf "[brig-install] WARNING: $what still missing:$once\n" >&2
-        warn "brig-rootless-setup.sh will ask for sudo once to set those up"
+        printf "[brig-install] WARNING: $what still missing:$need\n" >&2
+        warn "brig-rootless-setup.sh will make them with sudo"
+        return 0
     fi
+
+    _break_bar
+    # shellcheck disable=SC2059
+    printf "[brig-install] ERROR: this host is not set up for a rootless brig:$miss$need\n\n" >&2
+    if [ -n "$need" ]; then
+        if [ "$setup_can" = true ]; then
+            why="sudo cannot run here without a password"
+        else
+            why="the installer does not install packages or add subuid ranges"
+        fi
+        cat >&2 <<MSG
+  Nothing was downloaded: $why.
+  Run the commands below as root, or ask an admin to, and then run this
+  installer again. It needs no sudo after that.
+
+sudo sh -eu <<'BRIG_ROOT'
+$(cat "$fix")
+BRIG_ROOT
+
+MSG
+        if [ "$setup_can" = true ]; then
+            echo "  With sudo of your own, run 'sudo -v' and then this installer again: it" >&2
+            echo "  makes these itself." >&2
+        fi
+    fi
+    echo "  See docs/rootless.md." >&2
+    exit 1
+}
+
+# Whether the running kernel has the module, loaded or not. Without modinfo
+# there is no telling, and the answer that leads to a working host is yes.
+module_exists() {
+    command -v modinfo >/dev/null 2>&1 || return 0
+    modinfo "$1" >/dev/null 2>&1
 }
 
 # An existing prefix is only ours if we stamped it.

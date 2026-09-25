@@ -168,10 +168,32 @@ only. And the tree is one copy per user where a root install is shared, so with
 root and several users, `brig-ctl rootless` against one shared install is the
 better trade.
 
-The host prerequisites above still apply. `install.sh --user` reports both
-before it unpacks anything, and the rootless setup asks sudo once to fix them.
-The AppArmor profile names this prefix's rootlesskit, so a profile written for
-`/var/lib` does not cover a tree in `$HOME`.
+The host prerequisites above still apply, and `install.sh --user` checks them
+before it downloads anything. When sudo runs without a password, it goes on and
+the rootless setup makes them with sudo at the end. When it does not, the
+installer stops there. It prints the commands that prepare the host for this
+user and this prefix, as one block for root:
+
+```console
+$ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/main/install.sh | sh -
+[brig-install] ERROR: this host is not set up for a rootless brig:
+  no access to /dev/kvm from inside the user namespace
+  no access to /dev/vhost-vsock from inside the user namespace
+
+  Nothing was downloaded: sudo cannot run here without a password.
+  Run the commands below as root, or ask an admin to, and then run this
+  installer again. It needs no sudo after that.
+
+sudo sh -eu <<'BRIG_ROOT'
+cat > /etc/udev/rules.d/99-brig-kvm-alice.rules <<'RULE'
+...
+BRIG_ROOT
+```
+
+Once an admin has run them, the same installer runs to the end without sudo.
+A user with a sudo password can run `sudo -v` first instead. The AppArmor
+profile names this prefix's rootlesskit, so a profile written for `/var/lib`
+does not cover a tree in `$HOME`.
 
 Building for a prefix directly is still an option, for an air-gapped host or a
 layout of your own:

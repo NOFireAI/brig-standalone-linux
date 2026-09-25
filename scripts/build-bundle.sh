@@ -420,8 +420,15 @@ if [ "$OPEN_DEVICES" != true ]; then
         fatal "setfacl is missing (apt install acl); the device grant is made with it"
     fi
 fi
+# A kernel without the module has nothing to load, and asking sudo to try is a
+# password prompt for nothing. install.sh makes the same test before it
+# downloads anything.
 for m in kvm vhost_vsock; do
-    [ -d "/sys/module/$m" ] || sudo modprobe "$m" >/dev/null 2>&1 || true
+    [ -d "/sys/module/$m" ] && continue
+    if command -v modinfo >/dev/null 2>&1 && ! modinfo "$m" >/dev/null 2>&1; then
+        continue
+    fi
+    sudo modprobe "$m" >/dev/null 2>&1 || true
 done
 
 # Loading it now only covers this boot. Nothing asks for vhost_vsock again on
