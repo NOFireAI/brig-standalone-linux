@@ -54,7 +54,20 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           shellcheck -s sh install.sh scripts/build-bundle.sh /tmp/brig-uninstall.sh \
-            /tmp/brig-rootless-setup.sh /tmp/brig-ctl
+            /tmp/brig-rootless-setup.sh /tmp/brig-ctl tests/*.sh
+
+      - name: Script tests
+        # The tests run the generated scripts and install.sh against stubs, as
+        # a normal user. The rootless setup refuses a user without a subuid
+        # range, so the runner gets one.
+        run: |
+          set -eu
+          grep -q "^$(id -un):" /etc/subuid \
+            || sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$(id -un)"
+          for t in tests/*.sh; do
+            echo "--- $t"
+            sh "$t"
+          done
 
   # Build the real bundle on each arch's native runner: urunc, urunit and the
   # initrd from source (never a released urunc), the guest kernel pulled, the

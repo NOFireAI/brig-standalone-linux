@@ -41,9 +41,10 @@ containerd binary and shims, a `nerdctl.toml` with the data root and CNI config
 under `$HOME`, and a systemd user unit with lingering on so the daemon outlives
 the login shell.
 
-## What still needs root, once per host
+## What still needs root
 
-Two things, and an unprivileged user can do neither:
+Two things, and an unprivileged user can do neither. The AppArmor profile is
+needed once per prefix, and the device grant once per user.
 
 - **An AppArmor profile for rootlesskit.** Ubuntu 24.04 and later set
   `kernel.apparmor_restrict_unprivileged_userns=1`, and the profile names the
@@ -52,21 +53,40 @@ Two things, and an unprivileged user can do neither:
 - **Device access.** The VMM runs as the user inside that namespace, so the
   `kvm` group does not reach it and `KVM_CREATE_VM` returns `EPERM`. The setup
   grants the user directly with a udev rule over `/dev/kvm` and
-  `/dev/vhost-vsock`. A plain `setfacl` does not survive the next event on the
-  device, which is why it is a rule. The rule needs `setfacl` to exist
-  (`apt install acl`) and the device's module to be loaded -- udev runs `RUN+=`
-  without a shell and reports nothing, and a `/dev` node whose module was never
-  loaded has no udev entry for a rule to match, so either one silently grants
-  nothing. The setup checks for both and reads the grant back afterwards. It also
-  writes `/etc/modules-load.d/brig.conf` so `vhost_vsock` comes back after a
-  reboot: the module has no hardware to autoload from, and the node it creates
-  is the only thing anyone could open to trigger it, so a host that has it
-  today does not have it tomorrow. `kvm` needs no such help -- it autoloads
-  from the CPU, which is why `/dev/kvm` is present on a host that never asked
-  for it.
+  `/dev/vhost-vsock`, in a file of that user's own:
+  `/etc/udev/rules.d/99-brig-kvm-<user>.rules`. A plain `setfacl` does not
+  survive the next event on the device, which is why it is a rule. The rule
+  needs `setfacl` to exist (`apt install acl`) and the device's module to be
+  loaded -- udev runs `RUN+=` without a shell and reports nothing, and a
+  `/dev` node whose module was never loaded has no udev entry for a rule to
+  match, so either one silently grants nothing. The setup checks for both and
+  reads the grant back afterwards. It also writes
+  `/etc/modules-load.d/brig.conf`, unless a file there already lists
+  `vhost_vsock`, so the module comes back after a reboot: the module has no
+  hardware to autoload from, and the node it creates is the only thing anyone
+  could open to trigger it, so a host that has it today does not have it
+  tomorrow. `kvm` needs no such help -- it autoloads from the CPU, which is
+  why `/dev/kvm` is present on a host that never asked for it.
 
-`brig-ctl rootless` does both with sudo, once, and says so as it goes. After
-that any number of users run it and are unprivileged from then on.
+`brig-ctl rootless` does both with sudo and says so as it goes. It asks only
+for what is missing, and it reads the device grant from the devices themselves.
+A re-run needs no sudo, and neither does a user whose grant an admin already
+wrote, whatever that file is called. A second user's setup adds a second file
+and leaves the first user's grant alone.
+
+A host set up by an older bundle has a single `99-brig-kvm.rules`. Every
+user's setup wrote that one file, so it names whoever ran it last. It keeps
+granting that user, and the setup never writes or removes it. Every other user
+gets a file of their own.
+
+A grant outlives the install it was made for: `brig-ctl uninstall` runs as the
+user and cannot remove it. Root removes it, and drops the ACL it set:
+
+```console
+# rm /etc/udev/rules.d/99-brig-kvm-<user>.rules
+# udevadm control --reload-rules
+# setfacl -x u:<user> /dev/kvm /dev/vhost-vsock
+```
 
 `/dev/vhost-net` is not in the grant: a guest boots and reaches the network
 without it. Which devices a run needs at all depends on the monitor urunc
@@ -100,6 +120,18 @@ That is wider than the default grant -- every user of the host can then open
 belongs upstream in urunc, which has no reason to run the *monitor* as the
 image's user: the image's user governs what runs inside the guest, and the
 monitor is the host-side process that boots it.
+
+`--open-devices` writes `/etc/udev/rules.d/99-brig-open-devices.rules`, one
+file for the whole host. Its name sorts after every per-user rule, so its mode
+wins while it exists. A setup run without the flag leaves it in place, since
+another user may depend on it. To close the devices again, root removes it and
+puts the devices back at `0660`:
+
+```console
+# rm /etc/udev/rules.d/99-brig-open-devices.rules
+# udevadm control --reload-rules
+# chmod 0660 /dev/kvm /dev/vhost-vsock
+```
 
 ## Installing into a home directory
 
