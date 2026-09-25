@@ -271,8 +271,8 @@ the three that do not:
 | Component | Source | In the tarball |
 | --- | --- | --- |
 | brig, brigd | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
-| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` @ `feat/unchanged_containers` | CGO-static, built in a Go container |
-| urunit | built from `NOFireAI/urunit` @ `urunit_agent` | C-static; goes into the initrd |
+| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `0818ff1` (branch `feat/unchanged_containers-exec-fixes`) | CGO-static, built in a Go container |
+| urunit | built from `NOFireAI/urunit` at commit `71bfdee` (branch `urunit_agent`) | C-static; goes into the initrd |
 | container-initrd | built from the above | assembled for brig, not fetched |
 | guest kernel (amd64) | `harbor.nbfc.io/nubificus/bunny/linux-kernel-cloud-hypervisor` | fetched; extracted from the bunny image's `/.boot/kernel` |
 | guest kernel (arm64) | `ghcr.io/nofireai/hull-assets` | fetched; the same kernel hull and brig use |
@@ -283,6 +283,37 @@ the three that do not:
 
 Then it generates the config files, systemd units, `brig-ctl` and the
 uninstaller, and packs the whole `/var/lib/brig/data` tree.
+
+### urunc and urunit are pinned to a commit
+
+A branch tip is not a release input. It moves with every push, so two builds
+of one bundle version would carry different code. So `build-bundle.sh` pins
+each of the two to one commit, `URUNC_REF_DEFAULT` and `URUNIT_REF_DEFAULT`.
+The build fetches that commit by its SHA, fails if the checkout is anything
+else, and records it in `pins.env` as `URUNC_REF` and `URUNIT_REF`. CI checks
+that record on every bundle it builds.
+
+The urunc pin is `feat/unchanged_containers` plus the two `urunit-agent` exec
+fixes, urunc-dev/urunc#1059 and urunc-dev/urunc#1060. The urunit pin is what
+v0.1.0-rc6 to rc8 shipped.
+
+Moving a pin is a reviewed one-line change to the `*_REF_DEFAULT` line, plus
+its `*_BRANCH_DEFAULT` when the new commit comes from another branch. A one-off
+build of another commit takes it from the environment:
+
+```console
+$ URUNC_REF=<40-character sha> scripts/build-bundle.sh --arch amd64 --version dev
+```
+
+To build a branch tip on purpose, set the ref empty. The build then warns in its
+log and records `URUNC_PINNED=false` in `pins.env`:
+
+```console
+$ URUNC_REF= URUNC_BRANCH=feat/unchanged_containers scripts/build-bundle.sh --arch amd64 --version dev
+```
+
+A branch given without a ref is refused, since it is unclear which of the two
+was meant.
 
 ### Why the initrd is brig's own, not hull-assets'
 

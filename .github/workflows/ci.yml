@@ -124,6 +124,16 @@ jobs:
           esac
           grep -q "^ROOTLESS=$want$" "$p" \
             || { echo "pins.env does not say ROOTLESS=$want"; exit 1; }
+          # urunc and urunit are built from pinned commits, and the build
+          # fails if the checkout is anything else. This checks the record: the
+          # commits in pins.env are the ones the script pins.
+          for c in URUNC URUNIT; do
+            want="$(sed -n "s/^${c}_REF_DEFAULT=\([0-9a-f]\{40\}\)$/\1/p" scripts/build-bundle.sh)"
+            [ -n "$want" ] || { echo "no ${c}_REF_DEFAULT in build-bundle.sh"; exit 1; }
+            grep -E "^${c}_(REF|PINNED)=" "$p"
+            grep -qx "${c}_REF=$want" "$p" || { echo "pins.env does not carry ${c}_REF=$want"; exit 1; }
+            grep -qx "${c}_PINNED=true" "$p" || { echo "pins.env does not say ${c}_PINNED=true"; exit 1; }
+          done
 
       - uses: actions/upload-artifact@v4
         with:

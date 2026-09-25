@@ -93,11 +93,52 @@ done
 # bundle is cut for. BRIG_VERSION=latest still works for a local build.
 BRIG_VERSION="${BRIG_VERSION:-v0.2.0}"
 BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
+# urunc and urunit have no release that carries what brig needs, so they are
+# built from source, and the source is pinned to one commit each. A branch tip
+# moves with every push, so it is not a release input: two builds of one bundle
+# version would carry different code. Moving a pin is a reviewed one-line
+# change to a *_REF_DEFAULT below, plus its *_BRANCH_DEFAULT when the commit
+# comes from another branch.
+#
+# *_BRANCH names the branch the pinned commit comes from. It is recorded in
+# pins.env, and it is what gets built when the matching *_REF is set empty
+# (URUNC_REF= scripts/build-bundle.sh ...): the tip, with a warning in the
+# build log and *_PINNED=false in pins.env. An unset *_REF takes the pin
+# below, which is why these use ${VAR-default} and not ${VAR:-default}.
+#
+# urunc: feat/unchanged_containers plus the two urunit-agent exec fixes,
+# urunc-dev/urunc#1059 and #1060. The agent in the initrd is built from this
+# checkout too.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
-URUNC_BRANCH="${URUNC_BRANCH:-feat/unchanged_containers}"
+URUNC_BRANCH_DEFAULT=feat/unchanged_containers-exec-fixes
+URUNC_REF_DEFAULT=0818ff104781087a12a75059062c3407a8b97c8a
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.4}"
+# urunit: the init in the initrd. What v0.1.0-rc6 to rc8 shipped.
 URUNIT_REPO="${URUNIT_REPO:-NOFireAI/urunit}"
-URUNIT_BRANCH="${URUNIT_BRANCH:-urunit_agent}"
+URUNIT_BRANCH_DEFAULT=urunit_agent
+URUNIT_REF_DEFAULT=71bfdeefb7bced121c4e75afa97550523af34152
+# A branch given without a ref would otherwise build the pinned commit and
+# ignore the branch, so ask which one was meant.
+if [ -n "${URUNC_BRANCH:-}" ] && [ "$URUNC_BRANCH" != "$URUNC_BRANCH_DEFAULT" ] && [ -z "${URUNC_REF+set}" ]; then
+    fatal "URUNC_BRANCH=$URUNC_BRANCH is set but URUNC_REF is not. Set URUNC_REF= to build that branch's tip, or URUNC_REF=<commit> to build one commit from it."
+fi
+if [ -n "${URUNIT_BRANCH:-}" ] && [ "$URUNIT_BRANCH" != "$URUNIT_BRANCH_DEFAULT" ] && [ -z "${URUNIT_REF+set}" ]; then
+    fatal "URUNIT_BRANCH=$URUNIT_BRANCH is set but URUNIT_REF is not. Set URUNIT_REF= to build that branch's tip, or URUNIT_REF=<commit> to build one commit from it."
+fi
+URUNC_BRANCH="${URUNC_BRANCH:-$URUNC_BRANCH_DEFAULT}"
+URUNC_REF="${URUNC_REF-$URUNC_REF_DEFAULT}"
+URUNIT_BRANCH="${URUNIT_BRANCH:-$URUNIT_BRANCH_DEFAULT}"
+URUNIT_REF="${URUNIT_REF-$URUNIT_REF_DEFAULT}"
+# The checkout compares HEAD with the ref, so a ref is a full SHA: a short one,
+# a tag or a branch name would never match.
+for r in "URUNC_REF=$URUNC_REF" "URUNIT_REF=$URUNIT_REF"; do
+    v="${r#*=}"
+    [ -n "$v" ] || continue
+    case "$v" in
+        *[!0-9a-f]*) fatal "${r%%=*}='$v' is not a commit: pin a full 40-character SHA" ;;
+    esac
+    [ "${#v}" -eq 40 ] || fatal "${r%%=*}='$v' is not a commit: pin a full 40-character SHA"
+done
 # Static musl busybox for the initrd, per arch. Extracted from this image so we
 # do not depend on busybox.net, which publishes 1.35.0 for x86_64 only.
 BUSYBOX_IMAGE="${BUSYBOX_IMAGE:-busybox:1.36.1-musl}"
@@ -849,6 +890,43 @@ verify() {
     fi
 }
 
+# checkout_source <repo> <branch> <ref> <dir>: put github.com/<repo> into <dir>
+# at exactly the commit <ref>, or at the tip of <branch> when <ref> is empty,
+# and print the commit it checked out. The commit is fetched by its SHA: a
+# --depth 1 --branch clone stops containing a pinned commit as soon as the
+# branch moves past it. GitHub serves any reachable commit by SHA, a pull
+# request's head included.
+checkout_source() {
+    cs_repo="$1"; cs_branch="$2"; cs_ref="$3"; cs_dir="$4"
+    # stdout carries the commit and nothing else.
+    git init -q "$cs_dir" >&2
+    git -C "$cs_dir" remote add origin "https://github.com/$cs_repo" >&2
+    if [ -n "$cs_ref" ]; then
+        git -C "$cs_dir" fetch -q --depth 1 origin "$cs_ref" >&2 \
+            || fatal "could not fetch $cs_repo@$cs_ref"
+    else
+        git -C "$cs_dir" fetch -q --depth 1 origin "refs/heads/$cs_branch" >&2 \
+            || fatal "could not fetch the $cs_branch branch of $cs_repo"
+    fi
+    git -C "$cs_dir" -c advice.detachedHead=false checkout -q FETCH_HEAD >&2
+    cs_head="$(git -C "$cs_dir" rev-parse HEAD)"
+    if [ -n "$cs_ref" ] && [ "$cs_head" != "$cs_ref" ]; then
+        fatal "$cs_repo: checked out $cs_head, not the pinned $cs_ref"
+    fi
+    echo "$cs_head"
+}
+
+# pinned_note <name> <repo> <branch> <ref> <commit>: log what was checked out,
+# and warn when it was a branch tip.
+pinned_note() {
+    if [ -n "$4" ]; then
+        info "$1: checked out $2@$5 (pinned; from branch $3)"
+    else
+        info "WARNING: $1: built $2@$5, the tip of $3 at build time. It is not pinned,"
+        info "WARNING: and a rebuild of this bundle version may carry different code."
+    fi
+}
+
 info "building $NAME (variant $VARIANT)"
 info "fetching components"
 
@@ -861,15 +939,17 @@ if [ "$VARIANT" = "stock" ] && [ -n "$URUNC_VERSION_STOCK" ]; then
     verify "$DL/containerd-shim-urunc-v2" "" "containerd-shim-urunc-v2_static_$ARCH"
     URUNC_SOURCE="$URUNC_REPO@$URUNC_VERSION_STOCK"
     URUNC_REF="$URUNC_VERSION_STOCK"
+    URUNC_PINNED=true
 else
-    command -v docker >/dev/null 2>&1 || fatal "docker is required to build urunc from $URUNC_REPO@$URUNC_BRANCH"
+    command -v docker >/dev/null 2>&1 || fatal "docker is required to build urunc from $URUNC_REPO"
     command -v git >/dev/null 2>&1 || fatal "git is required to build urunc from source"
-    info "building urunc from $URUNC_REPO@$URUNC_BRANCH ($URUNC_GO_IMAGE, linux/$ARCH)"
     src="$TMP_DIR/urunc-src"
-    git clone --depth 1 --branch "$URUNC_BRANCH" "https://github.com/$URUNC_REPO" "$src" 2>/dev/null \
-        || git clone "https://github.com/$URUNC_REPO" "$src"
-    ( cd "$src" && git checkout "$URUNC_BRANCH" 2>/dev/null ) || true
-    URUNC_REF="$(cd "$src" && git rev-parse HEAD)"
+    URUNC_PINNED=true
+    [ -n "$URUNC_REF" ] || URUNC_PINNED=false
+    u_commit="$(checkout_source "$URUNC_REPO" "$URUNC_BRANCH" "$URUNC_REF" "$src")"
+    pinned_note urunc "$URUNC_REPO" "$URUNC_BRANCH" "$URUNC_REF" "$u_commit"
+    URUNC_REF="$u_commit"
+    info "building urunc $URUNC_REF ($URUNC_GO_IMAGE, linux/$ARCH)"
     # --platform builds native inside a target-arch container (needs binfmt for
     # a cross build). The static urunc binary is CGO, so this is not a Go cross
     # compile.
@@ -888,16 +968,20 @@ fi
 # brig builds its own initrd rather than shipping hull-assets': it execs into a
 # guest through urunit-agent, which has to match the urunc shim's protocol, so
 # the agent is built from the same urunc checkout ($src) as the shim above.
-URUNIT_REF=""
-if [ "$VARIANT" != "stock" ]; then
+URUNIT_PINNED=""
+if [ "$VARIANT" = "stock" ]; then
+    # stock boots the unikernel's own init, so there is no urunit to build.
+    URUNIT_REF=""
+else
     command -v docker >/dev/null 2>&1 || fatal "docker is required to build the brig initrd"
     [ -d "${src:-}" ] || fatal "the urunc checkout is needed to build the initrd (build urunc from source)"
-    info "building urunit from $URUNIT_REPO@$URUNIT_BRANCH (linux/$ARCH)"
     usrc="$TMP_DIR/urunit-src"
-    git clone --depth 1 --branch "$URUNIT_BRANCH" "https://github.com/$URUNIT_REPO" "$usrc" 2>/dev/null \
-        || git clone "https://github.com/$URUNIT_REPO" "$usrc"
-    ( cd "$usrc" && git checkout "$URUNIT_BRANCH" 2>/dev/null ) || true
-    URUNIT_REF="$(cd "$usrc" && git rev-parse HEAD)"
+    URUNIT_PINNED=true
+    [ -n "$URUNIT_REF" ] || URUNIT_PINNED=false
+    ut_commit="$(checkout_source "$URUNIT_REPO" "$URUNIT_BRANCH" "$URUNIT_REF" "$usrc")"
+    pinned_note urunit "$URUNIT_REPO" "$URUNIT_BRANCH" "$URUNIT_REF" "$ut_commit"
+    URUNIT_REF="$ut_commit"
+    info "building urunit $URUNIT_REF (linux/$ARCH)"
     docker run --rm --platform "linux/$ARCH" -v "$usrc":/u -w /u alpine:3.20 \
         sh -c "apk add --no-cache build-base linux-headers make musl-dev >/dev/null && make static" \
         || fatal "urunit build failed"
@@ -1359,9 +1443,11 @@ URUNC_VERSION=$URUNC_SOURCE
 URUNC_REPO=$URUNC_REPO
 URUNC_BRANCH=$URUNC_BRANCH
 URUNC_REF=$URUNC_REF
+URUNC_PINNED=$URUNC_PINNED
 URUNIT_REPO=$([ "$VARIANT" = "stock" ] && echo "" || echo "$URUNIT_REPO")
 URUNIT_BRANCH=$([ "$VARIANT" = "stock" ] && echo "" || echo "$URUNIT_BRANCH")
 URUNIT_REF=$URUNIT_REF
+URUNIT_PINNED=$URUNIT_PINNED
 INITRD_SOURCE=$([ "$VARIANT" = "stock" ] && echo "" || echo "built:$URUNC_REF")
 PREFIX=$PREFIX
 DATA_DIR=$DATA_DIR
@@ -1383,6 +1469,12 @@ ASSETS_REPO=$([ "$KERNEL_FROM_ASSETS" = true ] && echo "$ASSETS_REPO" || echo ""
 ASSETS_VERSION=$([ "$KERNEL_FROM_ASSETS" = true ] && echo "$ASSETS_VERSION" || echo "")
 ASSETS_URUNC_REF=$ASSETS_URUNC_REF
 PINS
+if [ "$URUNC_PINNED" = false ]; then
+    echo "# WARNING: urunc is the tip of $URUNC_BRANCH at build time, not a pinned commit." >> "$STAGE/pins.env"
+fi
+if [ "$URUNIT_PINNED" = false ]; then
+    echo "# WARNING: urunit is the tip of $URUNIT_BRANCH at build time, not a pinned commit." >> "$STAGE/pins.env"
+fi
 
 # Deterministic tar: sorted names, one fixed timestamp, root-owned, fixed
 # directory and file modes, no extended headers. Fetched components are
