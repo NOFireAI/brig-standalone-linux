@@ -133,6 +133,11 @@ puts the devices back at `0660`:
 # chmod 0660 /dev/kvm /dev/vhost-vsock
 ```
 
+A user whose setup ran while the devices were open has no grant of their own,
+because the open devices already let them in. Once the devices are closed,
+that user runs `brig-ctl rootless` again, and it asks sudo for a grant in
+`99-brig-kvm-<user>.rules`.
+
 ## Installing into a home directory
 
 `install.sh --user` puts the whole thing under `$HOME` and touches nothing
