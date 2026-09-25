@@ -88,7 +88,10 @@ done
 # ---------------------------------------------------------------- pins
 # build-bundle.sh is the build authority: bumping a version here is the only place
 # it changes. install.sh does not build, so it carries none of these.
-BRIG_VERSION="${BRIG_VERSION:-latest}"
+# The brig release this bundle carries. On Linux it is the brig a user gets,
+# so it is pinned like every other component. Bump it with the brig release a
+# bundle is cut for. BRIG_VERSION=latest still works for a local build.
+BRIG_VERSION="${BRIG_VERSION:-v0.2.0}"
 BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
 URUNC_BRANCH="${URUNC_BRANCH:-feat/unchanged_containers}"
@@ -876,7 +879,8 @@ fi
 
 # ---- brig + brigd ------------------------------------------------------------
 # brig is not built here: its own release is fetched and repackaged into the tree.
-# "latest" resolves to brig's newest release (prereleases included).
+# "latest", for a local build, resolves to brig's newest release (prereleases
+# included).
 if [ "$VARIANT" != "stock" ] || [ "${BRIG_IN_STOCK:-true}" = "true" ]; then
     if [ "$BRIG_VERSION" = "latest" ]; then
         BRIG_VERSION="$(curl -sfL "https://api.github.com/repos/$BRIG_REPO/releases" \
