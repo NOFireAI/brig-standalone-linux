@@ -337,15 +337,20 @@ for arg in "$@"; do
     esac
 done
 
+# Whether the device is open to every user of this host.
+device_open() {
+    [ "$(stat -c %a "/dev/$1" 2>/dev/null || echo 0)" = 666 ]
+}
+
 # Whether this user can reach the device the way the monitor will. Group
-# membership is deliberately not consulted: it does not survive the user
-# namespace, so the kvm group that makes /dev/kvm openable at a login shell
-# reaches nothing inside.
+# membership is not consulted: it does not survive the user namespace, so the
+# kvm group that makes /dev/kvm openable at a login shell reaches nothing
+# inside. The answer comes from the device, whichever rule file put it there.
 device_granted() {
     if [ "$OPEN_DEVICES" = true ]; then
-        [ "$(stat -c %a "/dev/$1" 2>/dev/null || echo 0)" = 666 ]
+        device_open "$1"
     else
-        getfacl -p "/dev/$1" 2>/dev/null | grep -q "^user:$(id -un):rw"
+        getfacl -p "/dev/$1" 2>/dev/null | grep -q "^user:$(id -un):rw" || device_open "$1"
     fi
 }
 
@@ -425,34 +430,46 @@ done
 # module does. So the host is told to keep loading it. kvm is not in here --
 # that one autoloads from the CPU, which is why /dev/kvm is present on a host
 # that never asked for it. Only what this kernel really has is written: an
-# entry for an absent module is a warning on every boot.
+# entry for an absent module is a warning on every boot. Any file that already
+# lists the module will do, so a re-run, or a host an admin prepared with a
+# file of their own, needs no sudo here.
 MODULES_FILE=/etc/modules-load.d/brig.conf
 MODULES_WANT="# brig: the vsock device the monitor gives the guest. Written by
 # brig-rootless-setup.sh; the matching udev rule grants access to it.
 vhost_vsock"
 if [ -d /sys/module/vhost_vsock ] &&
-   [ "$(cat "$MODULES_FILE" 2>/dev/null)" != "$MODULES_WANT" ]; then
+   ! grep -qsx 'vhost_vsock' /etc/modules-load.d/*.conf /etc/modules; then
     say "modules" "asking this host to load vhost_vsock at boot (needs sudo)"
     printf '%s\n' "$MODULES_WANT" | sudo tee "$MODULES_FILE" >/dev/null
 fi
 
-RULE_FILE=/etc/udev/rules.d/99-brig-kvm.rules
-# Both rules name the mode, so the file says the whole truth about these
-# devices and applying it moves them either way. Leaving the mode out of the
-# default rule is what let --open-devices be one-way: udev does not undo a mode
-# a previous rule set, so a host switched back kept 0666 while the setup
-# reported it had granted one user.
+# Each user's grant is a file of its own, so a second user's setup adds a grant
+# and leaves the first one in place. Older setups all wrote
+# 99-brig-kvm.rules, and each run replaced the user named there. A host set up
+# that way keeps that file: it still grants the user it names, and nothing here
+# writes or removes it.
+#
+# --open-devices is a mode for the whole host, so it has one file of its own.
+# Its name sorts after every 99-brig-kvm*.rules, so its MODE="0666" wins over
+# their MODE="0660" while it exists. The per-user rules name the mode because
+# udev does not undo a mode an earlier rule set: without it, a host whose open
+# rule was removed stayed at 0666.
+USER_RULE="/etc/udev/rules.d/99-brig-kvm-$(id -un).rules"
+OPEN_RULE=/etc/udev/rules.d/99-brig-open-devices.rules
 if [ "$OPEN_DEVICES" = true ]; then
+    RULE_FILE="$OPEN_RULE"
     RULE_WANT=$(cat <<RULE
 # brig: --open-devices. The monitor runs as the container image's user, and an
 # image whose user is not root maps into a subuid that no per-user grant can
-# name. Mode 0666 is what lets those images run; it is wider than the ACL the
-# default rule writes, and it is the whole reason this is opt-in.
+# name. Mode 0666 lets those images run. It is wider than the per-user ACL,
+# which is why it is opt-in. Remove this file to go back to the per-user
+# grants in 99-brig-kvm-<user>.rules.
 KERNEL=="kvm", SUBSYSTEM=="misc", MODE="0666"
 KERNEL=="vhost-vsock", SUBSYSTEM=="misc", MODE="0666"
 RULE
 )
 else
+    RULE_FILE="$USER_RULE"
     RULE_WANT=$(cat <<RULE
 # brig: a rootless brig runs the VMM as the invoking user, inside a user
 # namespace that drops supplementary groups, so the kvm group never reaches
@@ -465,18 +482,22 @@ RULE
 )
 fi
 
+# What the devices allow decides whether anything is written. The file names
+# do not: an admin may have granted this user in a file of their own, and a
+# user without sudo can then finish the setup.
 HAVE_DEV=""
-NEED_DEV=""
+NEED_RULE=false
 for d in kvm vhost-vsock; do
     [ -e "/dev/$d" ] || continue
     HAVE_DEV="$HAVE_DEV $d"
-    device_granted "$d" || NEED_DEV="$NEED_DEV $d"
+    device_granted "$d" || NEED_RULE=true
 done
-# A rule that no longer says what this run wants is applied even when the
-# devices already look reachable -- that is the --open-devices switch-back,
-# where they are reachable precisely because the old rule is still in force.
-[ -f "$RULE_FILE" ] && [ "$(cat "$RULE_FILE" 2>/dev/null)" = "$RULE_WANT" ] || RULE_STALE=true
-if [ -n "$NEED_DEV" ] || [ "${RULE_STALE:-false}" = true ]; then
+# A device set to 0666 by hand goes back at the next event on it, so
+# --open-devices wants its rule in place as well.
+if [ "$OPEN_DEVICES" = true ] && [ ! -f "$OPEN_RULE" ]; then
+    NEED_RULE=true
+fi
+if [ "$NEED_RULE" = true ]; then
     if [ "$OPEN_DEVICES" = true ]; then
         say "devices" "opening$HAVE_DEV to every user of this host (needs sudo)"
     else
