@@ -960,6 +960,8 @@ main() {
     progress "start";        start_stack
     progress "done"
 
+    # This is the bundle's release. The brig inside it has a version of its
+    # own, and brig's installer replaces that brig after this one returns.
     ver="$(awk -F= '$1 == "BUNDLE_VERSION" {print $2}' "$PINS" 2>/dev/null)"
     grp_note=""
     start_note="  started:   $SERVICE_NAME.service"
@@ -989,7 +991,7 @@ main() {
 
     cat >&2 <<DONE
 
-[brig-install] brig ${ver:-installed} is installed ($INSTALL_MODE)
+[brig-install] the brig runtime bundle${ver:+ $ver} is installed ($INSTALL_MODE)
 
   prefix:    $PREFIX
   state:     $DATA_DIR
