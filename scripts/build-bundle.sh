@@ -107,11 +107,12 @@ BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # below, which is why these use ${VAR-default} and not ${VAR:-default}.
 #
 # urunc: feat/unchanged_containers plus the two urunit-agent exec fixes,
-# urunc-dev/urunc#1059 and #1060. The agent in the initrd is built from this
-# checkout too.
+# urunc-dev/urunc#1059 and #1060, and a commit that sizes a container boot's
+# vCPUs from the container's CPU limit. The agent in the initrd is built from
+# this checkout too.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
 URUNC_BRANCH_DEFAULT=feat/unchanged_containers-exec-fixes
-URUNC_REF_DEFAULT=0818ff104781087a12a75059062c3407a8b97c8a
+URUNC_REF_DEFAULT=74dd0cc9e3028ea18c5daff69e4ba5452075f21d
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.4}"
 # urunit: the init in the initrd. What v0.1.0-rc6 to rc8 shipped.
 URUNIT_REPO="${URUNIT_REPO:-NOFireAI/urunit}"
