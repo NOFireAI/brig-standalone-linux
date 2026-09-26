@@ -45,7 +45,7 @@ by `build-bundle.sh` and packed into the tarball. The installer just unpacks the
 
 No urunc release publishes a binary that boots a generic container. So the build
 compiles one, from `urunc-dev/urunc` at the commit `build-bundle.sh` pins
-(`0818ff1`, on branch `feat/unchanged_containers-exec-fixes`), in a
+(`74dd0cc`, on branch `feat/unchanged_containers-exec-fixes`), in a
 `golang:1.26.4` container:
 
 ```console
@@ -179,7 +179,7 @@ refuses a stock binary, rather than printing a table of zeroes.
 3. Settled: the guest kernel is fetched — on amd64 from the bunny
    Cloud-Hypervisor kernel image, on arm64 from `hull-assets` by the same tags
    hull uses; the runtime is built from `urunc-dev/urunc` at a pinned commit
-   (`0818ff1`, on `feat/unchanged_containers-exec-fixes`); and the initrd is
+   (`74dd0cc`, on `feat/unchanged_containers-exec-fixes`); and the initrd is
    built for brig from `NOFireAI/urunit` at a pinned commit (`71bfdee`, on
    `urunit_agent`) plus urunc's own `packaging/container-initrd`, so its agent
    matches the shim. Both pins are commits because a branch tip moves with every

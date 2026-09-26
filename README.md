@@ -271,7 +271,7 @@ the three that do not:
 | Component | Source | In the tarball |
 | --- | --- | --- |
 | brig, brigd | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
-| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `0818ff1` (branch `feat/unchanged_containers-exec-fixes`) | CGO-static, built in a Go container |
+| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `74dd0cc` (branch `feat/unchanged_containers-exec-fixes`) | CGO-static, built in a Go container |
 | urunit | built from `NOFireAI/urunit` at commit `71bfdee` (branch `urunit_agent`) | C-static; goes into the initrd |
 | container-initrd | built from the above | assembled for brig, not fetched |
 | guest kernel (amd64) | `harbor.nbfc.io/nubificus/bunny/linux-kernel-cloud-hypervisor` | fetched; extracted from the bunny image's `/.boot/kernel` |
@@ -294,7 +294,9 @@ else, and records it in `pins.env` as `URUNC_REF` and `URUNIT_REF`. CI checks
 that record on every bundle it builds.
 
 The urunc pin is `feat/unchanged_containers` plus the two `urunit-agent` exec
-fixes, urunc-dev/urunc#1059 and urunc-dev/urunc#1060. The urunit pin is what
+fixes, urunc-dev/urunc#1059 and urunc-dev/urunc#1060. It also carries a commit
+that sizes a container boot's vCPUs from the container's CPU limit, so
+`brig run --cpus N` gives the guest N vCPUs. The urunit pin is what
 v0.1.0-rc6 to rc8 shipped.
 
 Moving a pin is a reviewed one-line change to the `*_REF_DEFAULT` line, plus
