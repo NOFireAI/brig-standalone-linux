@@ -77,6 +77,14 @@ verify it on a machine that has cosign, copy it across, then:
 # INSTALL_BRIG_BUNDLE=./brig-standalone-v0.1.0-linux-amd64.tar.gz sh install.sh
 ```
 
+Copy the release's `checksums.txt`, `checksums.txt.sig` and `checksums.txt.pem`
+across too, into the same directory as the tarball. `install.sh` keeps them
+beside the kernel and initrd, which is what lets brig check those two files
+against the release before a boot. Without them, brig warns before every run
+that it cannot check the kernel, and refuses under `BRIG_VERIFY=require`. That
+check asks Sigstore online, so a host with no network at all still gets the
+warning.
+
 ### Verifying
 
 A downloaded tarball is checked against the release's `checksums.txt`, which the
@@ -105,7 +113,8 @@ $ sha256sum -c checksums.txt --ignore-missing
     libexec/cni/    CNI plugins
     etc/            urunc.toml, containerd.toml, nerdctl.toml, brig-env.sh,
                     cni/net.d/, systemd/, certs.d/
-    share/guest/    Image or bzImage, container-initrd, bundle.json, SHA256SUMS
+    share/guest/    Image or bzImage, container-initrd, bundle.json, SHA256SUMS,
+                    and the release's checksums.txt, .sig and .pem
     share/completions/  bash, zsh, fish completions
     pins.env        every bundled version, the one manifest
     .install-stamp  what this install created, read by the uninstaller
@@ -223,7 +232,7 @@ Everything is driven by environment variables and a couple of flags.
 | `INSTALL_BRIG_POOL_SIZE` | `100G` | thin pool data size, sparse |
 | `INSTALL_BRIG_POOL_PREALLOC` | `false` | `true` to `fallocate` the backing files |
 | `INSTALL_BRIG_SKIP_START` | `false` | lay the tree down without starting it |
-| `INSTALL_BRIG_SKIP_SIGCHECK` | `false` | install a remote tarball unverified |
+| `INSTALL_BRIG_SKIP_SIGCHECK` | `false` | install a remote tarball unverified, keeping no signed record of the kernel and initrd (brig then warns before every run) |
 | `INSTALL_BRIG_FORCE` | `false` | take over an `/var/lib/brig/data` we did not create |
 | `INSTALL_BRIG_DEBUG` | `false` | `set -x` |
 
@@ -342,8 +351,12 @@ anything on first run. The annotations that carry them are
 
 `share/guest/SHA256SUMS` holds the sha256 of the kernel and of the initrd. Each
 release publishes the same bytes as `<bundle>.boot-assets.sha256`, which the
-release's signed `checksums.txt` covers, so brig can check the files it is about
-to boot against a record that the release signed.
+release's signed `checksums.txt` covers. `install.sh` keeps that `checksums.txt`,
+with `checksums.txt.sig` and `checksums.txt.pem`, in `share/guest`, so brig can
+check the files it is about to boot against a record that the release signed.
+It keeps them only when `checksums.txt` lists this `SHA256SUMS`. A local tarball
+keeps them when they were copied across beside it. A remote install under
+`INSTALL_BRIG_SKIP_SIGCHECK` keeps none.
 
 ## What it touches outside the base directories
 
