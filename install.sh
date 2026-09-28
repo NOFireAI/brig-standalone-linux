@@ -146,7 +146,9 @@ nothing.
                               (default: ask; non-interactive falls back to yes)
   INSTALL_BRIG_VERBOSE        true for a line per stage (default: false, quiet)
   INSTALL_BRIG_SKIP_START     true to lay the tree down without starting it
-  INSTALL_BRIG_SKIP_SIGCHECK  true to install a remote tarball unverified
+  INSTALL_BRIG_SKIP_SIGCHECK  true to install a remote tarball unverified. It
+                              keeps no signed record of the kernel and initrd,
+                              so brig warns before every run
   INSTALL_BRIG_REQUIRE_SIGCHECK  true to refuse unless the cosign signature
                               over checksums.txt verifies
   INSTALL_BRIG_FORCE          true to take over a /var/lib/brig/data we did not create
@@ -554,6 +556,14 @@ fetch_tarball() {
             [ -f "$BUNDLE" ] || fatal "tarball '$BUNDLE' not found"
             say "installing from the local tarball $BUNDLE"
             cp "$BUNDLE" "$TARBALL"
+            # The release's checksums.txt, signature and certificate, when
+            # they were copied across beside the tarball, are the record
+            # keep_release_record keeps. The tarball is still taken as given.
+            for f in checksums.txt checksums.txt.sig checksums.txt.pem; do
+                if [ -f "$(dirname "$BUNDLE")/$f" ]; then
+                    cp "$(dirname "$BUNDLE")/$f" "$TMP_DIR/$f"
+                fi
+            done
             ;;
     esac
 }
@@ -572,9 +582,15 @@ verify_tarball() {
         || fatal "no checksums.txt next to the tarball, cannot verify it.
     Set INSTALL_BRIG_SKIP_SIGCHECK=true to install it unverified anyway."
 
-    if command -v cosign >/dev/null 2>&1 \
-       && fetch_quiet "$base/checksums.txt.pem" "$TMP_DIR/checksums.txt.pem" \
+    # The signature is fetched whether or not cosign is here to check it:
+    # keep_release_record puts it beside the boot assets, where brig checks it
+    # with the bundle's own cosign before a boot.
+    sig_fetched=false
+    if fetch_quiet "$base/checksums.txt.pem" "$TMP_DIR/checksums.txt.pem" \
        && fetch_quiet "$base/checksums.txt.sig" "$TMP_DIR/checksums.txt.sig"; then
+        sig_fetched=true
+    fi
+    if command -v cosign >/dev/null 2>&1 && [ "$sig_fetched" = "true" ]; then
         # A signature that fails is not a signature that is absent. The first
         # says the bytes or the identity are wrong and is fatal; only the second
         # degrades to the hash.
@@ -640,12 +656,53 @@ unpack_tarball() {
     done
     [ -f "$root/pins.env" ] && cp "$root/pins.env" "$PREFIX/pins.env"
     chmod 0755 "$PREFIX"
+    keep_release_record
 
     mkdir -p "$DATA_DIR/containerd" "$DATA_DIR/nerdctl" "$DATA_DIR/log" "$RUN_DIR"
     retarget_tree
     # No snapshotter retargeting: the tarball's configs default brig to overlayfs
     # and keep devmapper configured in containerd, so CONTAINERD_SNAPSHOTTER=devmapper
     # switches at runtime without rewriting anything.
+}
+
+# Keep the release's checksums.txt, and its signature and certificate, beside
+# the boot assets. checksums.txt lists <bundle>.boot-assets.sha256, which is
+# share/guest/SHA256SUMS, so brig can check the kernel and initrd against a
+# record the release signed before every boot.
+#
+# Without the three files brig cannot check that record: it warns before every
+# run, and refuses under BRIG_VERIFY=require. A local tarball with nothing
+# beside it, a remote one under INSTALL_BRIG_SKIP_SIGCHECK, and a bundle built
+# before the record (no SHA256SUMS) keep none, as asked. A release that gave
+# checksums.txt and not its signature, or whose checksums.txt does not list
+# this SHA256SUMS, keeps none and says so: brig would refuse that record before
+# every boot.
+keep_release_record() {
+    guest="$PREFIX/share/guest"
+    [ -f "$guest/SHA256SUMS" ] || return 0
+    if [ ! -s "$TMP_DIR/checksums.txt" ]; then
+        say "no checksums.txt from a release, so brig cannot check the boot assets' record"
+        return 0
+    fi
+    for f in checksums.txt.sig checksums.txt.pem; do
+        if [ ! -s "$TMP_DIR/$f" ]; then
+            warn "the release gave no $f, so no record of the kernel and initrd is kept.
+    brig warns before every run that it cannot check them, and refuses under BRIG_VERIFY=require."
+            return 0
+        fi
+    done
+    sums="$(sha256sum "$guest/SHA256SUMS" | awk '{print $1}')"
+    if ! awk -v h="$sums" '$1 == h && $2 ~ /[.]boot-assets[.]sha256$/ { found = 1 } END { exit !found }' \
+        "$TMP_DIR/checksums.txt"; then
+        warn "the release's checksums.txt does not list this bundle's SHA256SUMS, so no record of
+    the kernel and initrd is kept. brig warns before every run that it cannot check them."
+        return 0
+    fi
+    for f in checksums.txt checksums.txt.sig checksums.txt.pem; do
+        cp "$TMP_DIR/$f" "$guest/$f" || fatal "could not keep $f in $guest"
+        chmod 0644 "$guest/$f"
+    done
+    say "kept the release's signed checksums.txt in $guest"
 }
 
 # Move the tree's idea of where it lives. The generated wrappers, configs and
