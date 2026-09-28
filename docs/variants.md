@@ -81,7 +81,9 @@ digest. The artifact's layers are the files themselves, each named by its
 the signed manifest.
 
 The kernel is generic and not brig-specific. On arm64 it is the same file hull
-boots on macOS.
+boots on macOS. `pins.env` records it as `KERNEL_SOURCE`, by the digest the build
+pulled. `share/guest/SHA256SUMS` holds the sha256 of the kernel and the initrd,
+and each release publishes it as `<bundle>.boot-assets.sha256`: see the README.
 
 **The initrd is not taken from hull-assets.** brig execs into a guest through an
 in-guest agent, `urunit-agent`, whose wire protocol (`pkg/agentproto`) is a
