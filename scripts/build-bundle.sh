@@ -30,8 +30,11 @@
 # Produces, under --out:
 #   brig-standalone-<version>-linux-<arch>.tar.gz          (the install tarball)
 #   brig-standalone-<version>-linux-<arch>.pins.env        (the version manifest)
+#   brig-standalone-<version>-linux-<arch>.boot-assets.sha256
+#                                          (the kernel and initrd digests; not
+#                                           for --variant stock)
 #
-# and with --rootless, the same two named brig-standalone-<version>-rootless-*.
+# and with --rootless, the same files named brig-standalone-<version>-rootless-*.
 
 set -eu
 
@@ -63,7 +66,7 @@ while [ $# -gt 0 ]; do
         --variant) VARIANT="$2"; shift 2 ;;
         --rootless) ROOTLESS=true; shift ;;
         --urunc-version) URUNC_VERSION_STOCK="$2"; shift 2 ;;
-        --help|-h) sed -n '2,30p' "$0"; exit 0 ;;
+        --help|-h) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
         *) fatal "unknown argument '$1'" ;;
     esac
 done
@@ -1182,6 +1185,11 @@ if [ "$VARIANT" != "stock" ]; then
     cat > "$STAGE/share/guest/bundle.json" <<JSON
 {"ref": "$URUNC_REF", "urunit": "$URUNIT_REF", "built_by": "brig-build-bundle"}
 JSON
+    # The digests of the two files that boot. brig compares them with the
+    # files before a boot. The same bytes go out as a release asset, which the
+    # release's signed checksums.txt covers.
+    ( cd "$STAGE/share/guest" && sha256sum -- "$kernel" container-initrd ) \
+        > "$STAGE/share/guest/SHA256SUMS"
     info "  kernel from $KERNEL_SOURCE, initrd built for brig (urunc $URUNC_REF)"
 fi
 
@@ -1479,6 +1487,12 @@ tar --sort=name \
 gzip -n -9 -c "$TMP_DIR/$NAME.tar" > "$OUT/$NAME.tar.gz"
 
 cp "$STAGE/pins.env" "$OUT/$NAME.pins.env"
+# A stock build names its outputs as a generic-boot one does, so a record left
+# in --out by an earlier build would pass for this one's.
+rm -f "$OUT/$NAME.boot-assets.sha256"
+if [ -f "$STAGE/share/guest/SHA256SUMS" ]; then
+    cp "$STAGE/share/guest/SHA256SUMS" "$OUT/$NAME.boot-assets.sha256"
+fi
 
 info "done"
 info "  $OUT/$NAME.tar.gz  ($(du -h "$OUT/$NAME.tar.gz" | awk '{print $1}'))"

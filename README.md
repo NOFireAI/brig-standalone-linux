@@ -105,7 +105,7 @@ $ sha256sum -c checksums.txt --ignore-missing
     libexec/cni/    CNI plugins
     etc/            urunc.toml, containerd.toml, nerdctl.toml, brig-env.sh,
                     cni/net.d/, systemd/, certs.d/
-    share/guest/    Image or bzImage, container-initrd, bundle.json
+    share/guest/    Image or bzImage, container-initrd, bundle.json, SHA256SUMS
     share/completions/  bash, zsh, fish completions
     pins.env        every bundled version, the one manifest
     .install-stamp  what this install created, read by the uninstaller
@@ -339,6 +339,11 @@ The boot assets land in `share/guest/` and the launcher points brig at them
 through `BRIG_BOOT_ASSETS`, so brig uses the packed assets rather than fetching
 anything on first run. The annotations that carry them are
 `com.urunc.unikernel.bootKernel` and `com.urunc.unikernel.bootInitrd`.
+
+`share/guest/SHA256SUMS` holds the sha256 of the kernel and of the initrd. Each
+release publishes the same bytes as `<bundle>.boot-assets.sha256`, which the
+release's signed `checksums.txt` covers, so brig can check the files it is about
+to boot against a record that the release signed.
 
 ## What it touches outside the base directories
 

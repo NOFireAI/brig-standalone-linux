@@ -107,6 +107,25 @@ jobs:
           scripts/build-bundle.sh --arch "${{ matrix.arch }}" --version ci \
             --variant generic-boot ${{ matrix.flag }} --out dist
 
+      # The published record must be the one in the tree, and it must match the
+      # kernel and initrd the tree carries. pins.env names the kernel by digest.
+      - name: Check the boot-asset digests
+        run: |
+          set -eu
+          r="$(ls dist/*.boot-assets.sha256)"
+          d="$(mktemp -d)"
+          tar -xzf "$(ls dist/*.tar.gz)" -C "$d"
+          g="$(echo "$d"/*/share/guest)"
+          cmp "$r" "$g/SHA256SUMS"
+          (cd "$g" && sha256sum -c SHA256SUMS)
+          awk '{print $2}' "$g/SHA256SUMS" | LC_ALL=C sort | tr '\n' ' ' > "$d/names"
+          case "$(cat "$d/names")" in
+            "bzImage container-initrd "|"Image container-initrd ") ;;
+            *) echo "SHA256SUMS lists $(cat "$d/names")rather than the kernel and the initrd"; exit 1 ;;
+          esac
+          grep -Eq '^KERNEL_SOURCE=.+@sha256:[0-9a-f]{64}$' dist/*.pins.env \
+            || { echo "pins.env does not name the kernel by digest"; exit 1; }
+
       # install.sh retargets a user install by rewriting the layout the bundle
       # was generated with, which it reads from here.
       - name: Check the bundle records its layout
