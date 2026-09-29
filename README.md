@@ -280,7 +280,7 @@ the three that do not:
 | Component | Source | In the tarball |
 | --- | --- | --- |
 | brig, brigd | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
-| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `74dd0cc` (branch `feat/unchanged_containers-exec-fixes`) | CGO-static, built in a Go container |
+| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `f6d54d6` (branch `feat/unchanged_containers-exec-fixes`) | CGO-static, built in a Go container |
 | urunit | built from `NOFireAI/urunit` at commit `71bfdee` (branch `urunit_agent`) | C-static; goes into the initrd |
 | container-initrd | built from the above | assembled for brig, not fetched |
 | guest kernel | `ghcr.io/nofireai/hull-assets` | fetched by digest once its cosign signature checks out; the kernel hull and brig boot |
