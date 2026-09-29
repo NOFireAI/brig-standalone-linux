@@ -161,11 +161,11 @@ MONITORS="${MONITORS:-firecracker cloud-hypervisor solo5-hvt solo5-spt}"
 ASSETS_REGISTRY="${ASSETS_REGISTRY:-ghcr.io}"
 ASSETS_REPO="${ASSETS_REPO:-nofireai/hull-assets}"
 ASSETS_VERSION="${ASSETS_VERSION:-0.1.4}"
-# amd64 kernel: a bunny-built Cloud-Hypervisor kernel image (a plain OCI image
-# carrying the kernel at /.boot/kernel), extracted with docker like busybox is.
-# Empty falls back to the hull-assets oras pull. arm64 has no such image, so it
-# always takes the hull-assets path below.
-KERNEL_IMAGE_AMD64="${KERNEL_IMAGE_AMD64:-harbor.nbfc.io/nubificus/bunny/linux-kernel-cloud-hypervisor:latest}"
+# Who signs hull-assets: the identity brig checks before it boots a kernel from
+# there. The build checks the same one before it packs the kernel.
+ASSETS_SIGNER_DEFAULT='^https://github\.com/NOFireAI/hull-assets/\.github/workflows/build-assets\.yml@refs/heads/main$'
+ASSETS_SIGNER="${ASSETS_SIGNER:-$ASSETS_SIGNER_DEFAULT}"
+ASSETS_ISSUER="${ASSETS_ISSUER:-https://token.actions.githubusercontent.com}"
 VIRTIOFSD="${VIRTIOFSD:-true}"
 
 # Fixed install layout, baked into the config files the bundle carries. install.sh
@@ -1142,51 +1142,35 @@ fi
 chmod 0755 "$STAGE"/bin/*
 
 # ---- guest boot assets (generic-boot / introspection) ------------------------
-# The kernel on amd64 comes from KERNEL_IMAGE_AMD64 (a bunny-built OCI image with
-# the kernel at /.boot/kernel), extracted with docker; on arm64 (or if that is
-# unset) it comes from hull-assets, pulled with the oras we just bundled. The
-# initrd never does: hull-assets' initrd carries hull's agent, so it is thrown
-# away and the brig-built one above takes its place. A fresh bundle.json records
-# the urunc the agent was built against, so the installer can check coherence.
+# The kernel comes from hull-assets on both arches, pulled with the oras we just
+# bundled. The tag is resolved once, the cosign we just bundled checks the
+# signature on the digest it names, and that digest is what is pulled, so the
+# kernel is the one hull-assets signed. The initrd is not taken from there:
+# hull-assets' initrd carries hull's agent, so it is thrown away and the
+# brig-built one above takes its place. A fresh bundle.json records the urunc
+# the agent was built against, so the installer can check coherence.
 ASSETS_URUNC_REF=""
 KERNEL_SOURCE=""
 KERNEL_FROM_ASSETS=false
 if [ "$VARIANT" != "stock" ]; then
     case "$ARCH" in amd64) kernel=bzImage ;; arm64) kernel=Image ;; esac
-    if [ "$ARCH" = "amd64" ] && [ -n "$KERNEL_IMAGE_AMD64" ]; then
-        info "extracting the guest kernel from $KERNEL_IMAGE_AMD64 (linux/amd64)"
-        # Pull explicitly with retries: the registry sometimes resets the
-        # connection mid-handshake, and one reset should not kill the build.
-        kpull=""
-        katt=1
-        while [ "$katt" -le 5 ]; do
-            if docker pull --platform linux/amd64 "$KERNEL_IMAGE_AMD64" >/dev/null 2>&1; then
-                kpull=ok; break
-            fi
-            info "  pull attempt $katt/5 failed, retrying in $((katt * 3))s"
-            sleep $((katt * 3))
-            katt=$((katt + 1))
-        done
-        [ "$kpull" = ok ] || fatal "could not pull $KERNEL_IMAGE_AMD64 after 5 attempts"
-        # A scratch-style image (no shell), so copy the kernel out of a throwaway
-        # container instead of exec'ing cat inside it. The dummy command is never
-        # run; docker create just needs one, and docker cp works on a created
-        # container.
-        kcid="$(docker create --platform linux/amd64 "$KERNEL_IMAGE_AMD64" /nonexistent)" \
-            || fatal "could not create a container from $KERNEL_IMAGE_AMD64"
-        docker cp "$kcid:/.boot/kernel" "$STAGE/share/guest/$kernel"; kcp=$?
-        docker rm "$kcid" >/dev/null 2>&1 || true
-        [ "$kcp" -eq 0 ] || fatal "could not copy /.boot/kernel from $KERNEL_IMAGE_AMD64"
-        KERNEL_SOURCE="$KERNEL_IMAGE_AMD64"
-    else
-        a_tag="$ASSETS_VERSION-linux-$ARCH"
-        info "fetching the guest kernel $ASSETS_REPO:$a_tag with oras"
-        ( cd "$STAGE/share/guest" \
-          && "$STAGE/bin/oras" pull "$ASSETS_REGISTRY/$ASSETS_REPO:$a_tag" ) \
-            || fatal "could not pull $ASSETS_REPO:$a_tag"
-        KERNEL_SOURCE="$ASSETS_REGISTRY/$ASSETS_REPO:$a_tag"
-        KERNEL_FROM_ASSETS=true
-    fi
+    a_tag="$ASSETS_VERSION-linux-$ARCH"
+    a_ref="$ASSETS_REGISTRY/$ASSETS_REPO"
+    a_digest="$("$STAGE/bin/oras" resolve "$a_ref:$a_tag")" \
+        || fatal "could not resolve $ASSETS_REPO:$a_tag"
+    printf '%s\n' "$a_digest" | grep -Eqx 'sha256:[0-9a-f]{64}' \
+        || fatal "oras resolved $ASSETS_REPO:$a_tag to '$a_digest', not a sha256 digest"
+    a_cosign="$("$STAGE/bin/cosign" verify \
+        --certificate-identity-regexp "$ASSETS_SIGNER" \
+        --certificate-oidc-issuer "$ASSETS_ISSUER" \
+        "$a_ref@$a_digest" 2>&1 > /dev/null)" \
+        || fatal "the signature on $ASSETS_REPO@$a_digest did not verify against $ASSETS_SIGNER:
+    $(printf '%s\n' "$a_cosign" | tail -n 1)"
+    info "fetching the guest kernel $ASSETS_REPO:$a_tag ($a_digest, signature verified) with oras"
+    ( cd "$STAGE/share/guest" && "$STAGE/bin/oras" pull "$a_ref@$a_digest" ) \
+        || fatal "could not pull $ASSETS_REPO@$a_digest"
+    KERNEL_SOURCE="$a_ref:$a_tag@$a_digest"
+    KERNEL_FROM_ASSETS=true
     [ -s "$STAGE/share/guest/$kernel" ] || fatal "no $kernel in the guest assets"
 
     # Replace hull's initrd with the brig-built one.

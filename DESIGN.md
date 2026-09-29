@@ -44,10 +44,9 @@ now done and is what `install.sh` and `scripts/build-bundle.sh` produce.
   protocol must match the urunc shim, so hull-assets' prebuilt initrd (hull's
   agent) is not usable; the build assembles a brig initrd from urunit +
   `urunit-agent` (from the same urunc commit as the shim) + busybox + urunc's
-  `container-init`. The kernel is still fetched, not built: on amd64 from
-  the bunny Cloud-Hypervisor kernel image
-  (`harbor.nbfc.io/nubificus/bunny/linux-kernel-cloud-hypervisor`), on arm64 from
-  `ghcr.io/nofireai/hull-assets`.
+  `container-init`. The kernel is still fetched, not built: from
+  `ghcr.io/nofireai/hull-assets` on both arches, by digest, once its cosign
+  signature checks out.
   Because urunc and the initrd ship in one tarball built together, their agent
   commit matches by construction.
 - **The installer's own job** is the host wiring the tarball cannot carry: create
