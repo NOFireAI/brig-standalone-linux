@@ -274,8 +274,7 @@ the three that do not:
 | urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `74dd0cc` (branch `feat/unchanged_containers-exec-fixes`) | CGO-static, built in a Go container |
 | urunit | built from `NOFireAI/urunit` at commit `71bfdee` (branch `urunit_agent`) | C-static; goes into the initrd |
 | container-initrd | built from the above | assembled for brig, not fetched |
-| guest kernel (amd64) | `harbor.nbfc.io/nubificus/bunny/linux-kernel-cloud-hypervisor` | fetched; extracted from the bunny image's `/.boot/kernel` |
-| guest kernel (arm64) | `ghcr.io/nofireai/hull-assets` | fetched; the same kernel hull and brig use |
+| guest kernel | `ghcr.io/nofireai/hull-assets` | fetched by digest once its cosign signature checks out; the kernel hull and brig boot |
 | monitors, virtiofsd | `urunc-dev/monitors-build` | fetched |
 | containerd, runc, nerdctl, CNI | upstream releases | fetched, upstream checksums |
 | cosign | `sigstore/cosign` | fetched, pinned by sha256 |
@@ -326,8 +325,8 @@ carries hull's agent. So `build-bundle.sh` builds a brig initrd with urunc's own
 `packaging/container-initrd` tooling, from `urunit`, a `urunit-agent` built from
 the same urunc commit as the shim, a static `busybox`, and urunc's
 `container-init`. The urunc binary and the initrd's agent ship in one tarball, so
-they always match. Only the kernel is fetched rather than built — it is generic:
-on amd64 from the bunny Cloud-Hypervisor kernel image, on arm64 from hull-assets.
+they always match. Only the kernel is fetched rather than built. It is generic,
+and comes from hull-assets on both arches, checked against its signature.
 
 Two properties of the initrd are checked when the build packs it and again when
 the runtime boots it, because each fails in a way that does not name itself:
