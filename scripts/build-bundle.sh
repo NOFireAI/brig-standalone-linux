@@ -164,7 +164,7 @@ COSIGN_SHA_LINUX_ARM64="c5d324e091826b0d7a78eb16fef316450b4eb9aaec045611c08ba06f
 MONITORS="${MONITORS:-firecracker cloud-hypervisor solo5-hvt solo5-spt}"
 ASSETS_REGISTRY="${ASSETS_REGISTRY:-ghcr.io}"
 ASSETS_REPO="${ASSETS_REPO:-nofireai/hull-assets}"
-ASSETS_VERSION="${ASSETS_VERSION:-0.1.8}"
+ASSETS_VERSION="${ASSETS_VERSION:-0.1.9}"
 # Who signs hull-assets: the identity brig checks before it boots a kernel from
 # there. The build checks the same one before it packs the kernel.
 ASSETS_SIGNER_DEFAULT='^https://github\.com/NOFireAI/hull-assets/\.github/workflows/build-assets\.yml@refs/heads/main$'
