@@ -34,12 +34,12 @@ now done and is what `install.sh` and `scripts/build-bundle.sh` produce.
   above are not configurable at install time.
 - **Why three things are built (at release).** Most components are upstream release
   artifacts. Three have no upstream release and are compiled in the build: urunc
-  (from `urunc-dev/urunc` at commit `f6d54d6`, on
-  `feat/unchanged_containers-exec-fixes`, CGO static, so native per arch under
-  qemu/binfmt), urunit (from `NOFireAI/urunit` at commit `71bfdee`, on
-  `urunit_agent`, C static), and the brig `container-initrd`. The two sources are
-  pinned to a commit, not to a branch: a branch tip moves with every push, so it
-  is not a release input. The README's build section says how to move a pin.
+  (from `urunc-dev/urunc` at commit `90c8c36`, on
+  `feat/unchanged_containers-libcontainer`, CGO static, so native per arch under
+  qemu/binfmt), urunit (from `NOFireAI/urunit` at commit `a250eab`, on
+  `feat/urunit-agent-on-staging`, C static), and the brig `container-initrd`.
+  The two sources are pinned to a commit, not to a branch: a branch tip moves
+  with every push, so it is not a release input. The README's build section says how to move a pin.
   brig execs into a guest through an in-guest agent (`urunit-agent`) whose
   protocol must match the urunc shim, so hull-assets' prebuilt initrd (hull's
   agent) is not usable; the build assembles a brig initrd from urunit +

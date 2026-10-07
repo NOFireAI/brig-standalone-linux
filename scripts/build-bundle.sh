@@ -109,19 +109,20 @@ BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # build log and *_PINNED=false in pins.env. An unset *_REF takes the pin
 # below, which is why these use ${VAR-default} and not ${VAR:-default}.
 #
-# urunc: feat/unchanged_containers plus the two urunit-agent exec fixes,
-# urunc-dev/urunc#1059 and #1060, a commit that sizes a container boot's vCPUs
-# from the container's CPU limit, and one that boots arm64 guests on
-# cloud-hypervisor's virtio console. The agent in the initrd is built from this
-# checkout too.
+# urunc: the feat/unchanged_containers series and its exec fixes on urunc
+# main, which creates the monitor's container with libcontainer. On top: vCPUs
+# sized from the CPU limit, the urunit config as NUL-terminated records, and
+# four fixes for monitors that run as the image's non-root user or exit. The
+# agent in the initrd is built from this checkout too.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
-URUNC_BRANCH_DEFAULT=feat/unchanged_containers-exec-fixes
-URUNC_REF_DEFAULT=f6d54d661c7ff08fffaf7defca39d9e06c60dad3
+URUNC_BRANCH_DEFAULT=feat/unchanged_containers-libcontainer
+URUNC_REF_DEFAULT=90c8c36095cc42925b6878d2096ef6d4258774c0
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.4}"
-# urunit: the init in the initrd. What v0.1.0-rc6 to rc8 shipped.
+# urunit: the init in the initrd. The agent on urunit staging, which reads
+# the NUL-terminated config urunc now writes.
 URUNIT_REPO="${URUNIT_REPO:-NOFireAI/urunit}"
-URUNIT_BRANCH_DEFAULT=urunit_agent
-URUNIT_REF_DEFAULT=71bfdeefb7bced121c4e75afa97550523af34152
+URUNIT_BRANCH_DEFAULT=feat/urunit-agent-on-staging
+URUNIT_REF_DEFAULT=a250eab700de22891a95045906e4cb6372466b46
 # A branch given without a ref would otherwise build the pinned commit and
 # ignore the branch, so ask which one was meant.
 if [ -n "${URUNC_BRANCH:-}" ] && [ "$URUNC_BRANCH" != "$URUNC_BRANCH_DEFAULT" ] && [ -z "${URUNC_REF+set}" ]; then
@@ -1213,6 +1214,10 @@ syslog = false
 [timestamps]
 enabled = false
 destination = "$LOG_DIR/timestamps.log"
+
+# The monitor runs in a container that urunc creates with libcontainer.
+[runtime]
+libcontainer = true
 CFG
     for m in $MONITORS; do
         case "$m" in
