@@ -45,7 +45,7 @@ by `build-bundle.sh` and packed into the tarball. The installer just unpacks the
 
 No urunc release publishes a binary that boots a generic container. So the build
 compiles one, from `urunc-dev/urunc` at the commit `build-bundle.sh` pins
-(`f6d54d6`, on branch `feat/unchanged_containers-exec-fixes`), in a
+(`90c8c36`, on branch `feat/unchanged_containers-libcontainer`), in a
 `golang:1.26.4` container:
 
 ```console
@@ -95,7 +95,8 @@ assembles a brig initrd, with urunc's
 - `container-init`, urunc's early-userspace script (mounts the shared rootfs,
   stages urunit and the agent, `switch_root`s into urunit);
 - `urunit`, the tiny C init that becomes PID 1, built static from
-  `NOFireAI/urunit` at the pinned commit `71bfdee` (branch `urunit_agent`);
+  `NOFireAI/urunit` at the pinned commit `a250eab` (branch
+  `feat/urunit-agent-on-staging`);
 - `urunit-agent`, built from the **same** urunc commit that produced the shim,
   so the protocol matches by construction;
 - a static `busybox`.
@@ -171,10 +172,10 @@ refuses a stock binary, rather than printing a table of zeroes.
 3. Settled: the guest kernel is fetched from `hull-assets`, by the same tags hull
    uses, and checked against its signature; the runtime is built from
    `urunc-dev/urunc` at a pinned commit
-   (`f6d54d6`, on `feat/unchanged_containers-exec-fixes`); and the initrd is
-   built for brig from `NOFireAI/urunit` at a pinned commit (`71bfdee`, on
-   `urunit_agent`) plus urunc's own `packaging/container-initrd`, so its agent
-   matches the shim. Both pins are commits because a branch tip moves with every
+   (`90c8c36`, on `feat/unchanged_containers-libcontainer`); and the initrd is
+   built for brig from `NOFireAI/urunit` at a pinned commit (`a250eab`, on
+   `feat/urunit-agent-on-staging`) plus urunc's own
+   `packaging/container-initrd`, so its agent matches the shim. Both pins are commits because a branch tip moves with every
    push; the README's build section says how to move one.
 4. Does hvi join `monitors-build`, or does `build-bundle.sh` learn a second
    source?
