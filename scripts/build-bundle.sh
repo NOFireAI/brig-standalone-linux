@@ -109,14 +109,16 @@ BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # build log and *_PINNED=false in pins.env. An unset *_REF takes the pin
 # below, which is why these use ${VAR-default} and not ${VAR:-default}.
 #
-# urunc: feat/unchanged_containers plus the two urunit-agent exec fixes,
-# urunc-dev/urunc#1059 and #1060, a commit that sizes a container boot's vCPUs
-# from the container's CPU limit, and one that boots arm64 guests on
-# cloud-hypervisor's virtio console. The agent in the initrd is built from this
+# urunc: feat/unchanged_containers on top of urunc v0.8.1, plus the two
+# urunit-agent exec fixes, urunc-dev/urunc#1059 and #1060. It also carries a
+# commit that sizes a container boot's vCPUs from the container's CPU limit,
+# one that boots arm64 guests on cloud-hypervisor's virtio console, and one
+# that passes image_type=raw on every --disk (urunc-dev/urunc#1117), which
+# cloud-hypervisor v54.0 requires. The agent in the initrd is built from this
 # checkout too.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
 URUNC_BRANCH_DEFAULT=feat/unchanged_containers-exec-fixes
-URUNC_REF_DEFAULT=f6d54d661c7ff08fffaf7defca39d9e06c60dad3
+URUNC_REF_DEFAULT=0b1ef07229d678e7cbb3f61e12a8efcdd5070a8a
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.4}"
 # urunit: the init in the initrd. What v0.1.0-rc6 to rc8 shipped.
 URUNIT_REPO="${URUNIT_REPO:-NOFireAI/urunit}"
@@ -147,7 +149,21 @@ done
 # Static musl busybox for the initrd, per arch. Extracted from this image so we
 # do not depend on busybox.net, which publishes 1.35.0 for x86_64 only.
 BUSYBOX_IMAGE="${BUSYBOX_IMAGE:-busybox:1.36.1-musl}"
-MONITORS_VERSION="${MONITORS_VERSION:-FC-v1.7.0_CLH-v50.0_S5-v0.12.1_VFS_-v1.13.0_QM-v10.1.1-9a44e}"
+# The monitors and virtiofsd come from one monitors-build release. The release
+# is tagged vX.Y.Z and names its per-arch tarball after the monitor versions it
+# carries. monitors-build publishes no checksum file, so each tarball is pinned
+# by sha256 the way cosign is.
+#
+# cloud-hypervisor has to be v54.0 or later. Earlier releases offer the
+# virtio-net offloads by default and write a guest's virtio-net header to the
+# tap unchanged. That is the guest side of PwnEscape, the Linux host-kernel bug
+# in deferred checksum completion (fixed upstream in 6785011f8b16). v54.0 turns
+# the offloads off by default and drops a transmit chain whose header asks for
+# an offload the guest did not negotiate.
+MONITORS_RELEASE="${MONITORS_RELEASE:-v0.1.1}"
+MONITORS_VERSION="${MONITORS_VERSION:-FC-v1.7.0_CLH-v54.0_S5-v0.12.1_VFS-v1.13.0_QM-v10.1.1-9a44e}"
+MONITORS_SHA_LINUX_AMD64="66a33fbbcb1e125d7c80e99249b58580ff782eb6c1cb1710c8a52e470aa1a3e9"
+MONITORS_SHA_LINUX_ARM64="93c1c63437efc3d0c935a6eb3f358d28cc773f8770e4f608109c91cbdfcac2ee"
 CONTAINERD_VERSION="${CONTAINERD_VERSION:-v2.3.5}"
 RUNC_VERSION="${RUNC_VERSION:-v1.5.1}"
 NERDCTL_VERSION="${NERDCTL_VERSION:-v2.3.5}"
@@ -1062,9 +1078,15 @@ install -m 0755 "$DL/cosign" "$STAGE/bin/cosign"
 info "  cosign: verified against the pinned hash"
 
 # ---- the private-stack components --------------------------------------------
-m_name="release-$ARCH-$MONITORS_VERSION.tar.gz"
-fetch "$GITHUB/urunc-dev/monitors-build/releases/download/$MONITORS_VERSION/$m_name" "$DL/monitors.tar.gz"
-verify "$DL/monitors.tar.gz" "" "$m_name"
+case "$ARCH" in
+    amd64) m_sha="$MONITORS_SHA_LINUX_AMD64" ;;
+    arm64) m_sha="$MONITORS_SHA_LINUX_ARM64" ;;
+esac
+m_name="$MONITORS_VERSION-$ARCH.tar.gz"
+fetch "$GITHUB/urunc-dev/monitors-build/releases/download/$MONITORS_RELEASE/$m_name" "$DL/monitors.tar.gz"
+m_actual="$(sha256sum "$DL/monitors.tar.gz" | awk '{print $1}')"
+[ "$m_sha" = "$m_actual" ] || fatal "monitors hash mismatch for $m_name: expected $m_sha, got $m_actual"
+info "  monitors $MONITORS_RELEASE ($m_name): verified against the pinned hash"
 
 c_ver="${CONTAINERD_VERSION#v}"
 c_name="containerd-$c_ver-linux-$ARCH.tar.gz"
@@ -1449,6 +1471,7 @@ RUN_DIR=$RUN_DIR
 ROOTLESS=$ROOTLESS
 ROOTLESSKIT_VERSION=$([ "$ROOTLESS" = true ] && echo "$ROOTLESSKIT_VERSION" || echo "")
 SLIRP4NETNS_VERSION=$([ "$ROOTLESS" = true ] && echo "$SLIRP4NETNS_VERSION" || echo "")
+MONITORS_RELEASE=$MONITORS_RELEASE
 MONITORS_VERSION=$MONITORS_VERSION
 MONITORS_INSTALLED="$MONITORS"
 VIRTIOFSD_INSTALLED=$VIRTIOFSD
