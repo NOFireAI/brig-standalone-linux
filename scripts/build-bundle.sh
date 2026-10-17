@@ -11,8 +11,8 @@
 # monitors, the urunc runtime, the guest kernel and a brig-built initrd, plus
 # every config file, systemd unit, wrapper and the uninstaller. Most components
 # are upstream release artifacts; three are built here because no release ships
-# them: urunc (from urunc-dev/urunc), urunit (from NOFireAI/urunit) and the
-# container-initrd (assembled from both).
+# them: urunc (from urunc-dev/urunc), urunit (from NOFireAI/urunit), hvi (from
+# brig-sh/hvi-vmm) and the container-initrd (assembled from urunc and urunit).
 #
 #   scripts/build-bundle.sh --arch amd64 --version v0.1.0 --out dist
 #   scripts/build-bundle.sh --arch arm64 --version v0.1.0 --variant generic-boot
@@ -22,10 +22,10 @@
 # because a node install driven by root never uses any of it, and a user
 # install cannot work without it.
 #
-# docker is required (the urunc/urunit builds run in containers). Building the
-# arm64 pieces on an amd64 runner (or vice versa) needs binfmt/qemu registered,
-# because the static urunc binary and urunit are CGO/C and are built native
-# inside a target-arch container (docker run --platform).
+# docker is required (the urunc/urunit/hvi builds run in containers). Building
+# the arm64 pieces on an amd64 runner (or vice versa) needs binfmt/qemu
+# registered, because the static urunc binary and urunit are CGO/C and are
+# built native inside a target-arch container (docker run --platform).
 #
 # Produces, under --out:
 #   brig-standalone-<version>-linux-<arch>.tar.gz          (the install tarball)
@@ -112,18 +112,25 @@ BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # urunc: feat/unchanged_containers on top of urunc v0.8.1, plus the two
 # urunit-agent exec fixes, urunc-dev/urunc#1059 and #1060. It also carries a
 # commit that sizes a container boot's vCPUs from the container's CPU limit,
-# one that boots arm64 guests on cloud-hypervisor's virtio console, and one
-# that passes image_type=raw on every --disk (urunc-dev/urunc#1117), which
-# cloud-hypervisor v54.0 requires. The agent in the initrd is built from this
-# checkout too.
+# one that boots arm64 guests on cloud-hypervisor's virtio console, one that
+# passes image_type=raw on every --disk (urunc-dev/urunc#1117), which
+# cloud-hypervisor v54.0 requires, and the hvi monitor with exec over its agent
+# socket. The agent in the initrd is built from this checkout too.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
-URUNC_BRANCH_DEFAULT=feat/unchanged_containers-exec-fixes
-URUNC_REF_DEFAULT=0b1ef07229d678e7cbb3f61e12a8efcdd5070a8a
+URUNC_BRANCH_DEFAULT=feat/hvi-linux-drop-in
+URUNC_REF_DEFAULT=a1e79599c06a618b426bf9a3f519e6f5fe5119ef
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.4}"
 # urunit: the init in the initrd. What v0.1.0-rc6 to rc8 shipped.
 URUNIT_REPO="${URUNIT_REPO:-NOFireAI/urunit}"
 URUNIT_BRANCH_DEFAULT=urunit_agent
 URUNIT_REF_DEFAULT=71bfdeefb7bced121c4e75afa97550523af34152
+# hvi: the monitor brig boots a generic container on. No release ships a Linux
+# binary, so it is built here, static against musl, with the toolchain its
+# rust-toolchain.toml pins. It needs no C toolchain on Linux.
+HVI_REPO="${HVI_REPO:-brig-sh/hvi-vmm}"
+HVI_BRANCH_DEFAULT=main
+HVI_REF_DEFAULT=380f702b3988dc66b9b005730d2c43f1657fd434
+HVI_RUST_IMAGE="${HVI_RUST_IMAGE:-rust:1.95.0}"
 # A branch given without a ref would otherwise build the pinned commit and
 # ignore the branch, so ask which one was meant.
 if [ -n "${URUNC_BRANCH:-}" ] && [ "$URUNC_BRANCH" != "$URUNC_BRANCH_DEFAULT" ] && [ -z "${URUNC_REF+set}" ]; then
@@ -132,13 +139,18 @@ fi
 if [ -n "${URUNIT_BRANCH:-}" ] && [ "$URUNIT_BRANCH" != "$URUNIT_BRANCH_DEFAULT" ] && [ -z "${URUNIT_REF+set}" ]; then
     fatal "URUNIT_BRANCH=$URUNIT_BRANCH is set but URUNIT_REF is not. Set URUNIT_REF= to build that branch's tip, or URUNIT_REF=<commit> to build one commit from it."
 fi
+if [ -n "${HVI_BRANCH:-}" ] && [ "$HVI_BRANCH" != "$HVI_BRANCH_DEFAULT" ] && [ -z "${HVI_REF+set}" ]; then
+    fatal "HVI_BRANCH=$HVI_BRANCH is set but HVI_REF is not. Set HVI_REF= to build that branch's tip, or HVI_REF=<commit> to build one commit from it."
+fi
 URUNC_BRANCH="${URUNC_BRANCH:-$URUNC_BRANCH_DEFAULT}"
 URUNC_REF="${URUNC_REF-$URUNC_REF_DEFAULT}"
 URUNIT_BRANCH="${URUNIT_BRANCH:-$URUNIT_BRANCH_DEFAULT}"
 URUNIT_REF="${URUNIT_REF-$URUNIT_REF_DEFAULT}"
+HVI_BRANCH="${HVI_BRANCH:-$HVI_BRANCH_DEFAULT}"
+HVI_REF="${HVI_REF-$HVI_REF_DEFAULT}"
 # The checkout compares HEAD with the ref, so a ref is a full SHA: a short one,
 # a tag or a branch name would never match.
-for r in "URUNC_REF=$URUNC_REF" "URUNIT_REF=$URUNIT_REF"; do
+for r in "URUNC_REF=$URUNC_REF" "URUNIT_REF=$URUNIT_REF" "HVI_REF=$HVI_REF"; do
     v="${r#*=}"
     [ -n "$v" ] || continue
     case "$v" in
@@ -177,7 +189,8 @@ ORAS_VERSION="${ORAS_VERSION:-v1.3.4}"
 COSIGN_VERSION="${COSIGN_VERSION:-v3.1.3}"
 COSIGN_SHA_LINUX_AMD64="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
 COSIGN_SHA_LINUX_ARM64="c5d324e091826b0d7a78eb16fef316450b4eb9aaec045611c08ba06f5e73220a"
-MONITORS="${MONITORS:-firecracker cloud-hypervisor solo5-hvt solo5-spt}"
+# hvi is built from source; the rest come from the monitors release.
+MONITORS="${MONITORS:-hvi firecracker cloud-hypervisor solo5-hvt solo5-spt}"
 ASSETS_REGISTRY="${ASSETS_REGISTRY:-ghcr.io}"
 ASSETS_REPO="${ASSETS_REPO:-nofireai/hull-assets}"
 ASSETS_VERSION="${ASSETS_VERSION:-0.1.9}"
@@ -985,6 +998,31 @@ else
     info "  built urunc $URUNC_REF"
 fi
 
+# ---- hvi: built from source, static against musl -----------------------------
+HVI_PINNED=""
+case " $MONITORS " in
+    *" hvi "*)
+        command -v docker >/dev/null 2>&1 || fatal "docker is required to build hvi from $HVI_REPO"
+        command -v git >/dev/null 2>&1 || fatal "git is required to build hvi from source"
+        hsrc="$TMP_DIR/hvi-src"
+        HVI_PINNED=true
+        [ -n "$HVI_REF" ] || HVI_PINNED=false
+        h_commit="$(checkout_source "$HVI_REPO" "$HVI_BRANCH" "$HVI_REF" "$hsrc")"
+        pinned_note hvi "$HVI_REPO" "$HVI_BRANCH" "$HVI_REF" "$h_commit"
+        HVI_REF="$h_commit"
+        h_target="$ARCH_UNAME-unknown-linux-musl"
+        info "building hvi $HVI_REF ($HVI_RUST_IMAGE, $h_target)"
+        docker run --rm --platform "linux/$ARCH" -v "$hsrc":/hvi -w /hvi "$HVI_RUST_IMAGE" \
+            sh -c "rustup target add $h_target && cargo build --release --locked --target $h_target" \
+            || fatal "hvi build failed"
+        [ -s "$hsrc/target/$h_target/release/hvi" ] || fatal "no hvi produced by the build"
+        cp "$hsrc/target/$h_target/release/hvi" "$DL/hvi"
+        chmod 0755 "$DL/hvi"
+        info "  built hvi $HVI_REF"
+        ;;
+    *) HVI_REF="" ;;
+esac
+
 # ---- urunit + the brig container-initrd (generic-boot / introspection) -------
 # brig builds its own initrd rather than shipping hull-assets': it execs into a
 # guest through urunit-agent, which has to match the urunc shim's protocol, so
@@ -1151,6 +1189,7 @@ tar -xzf "$DL/monitors.tar.gz" -C "$TMP_DIR/monitors" --wildcards '*urunc/bin/*'
 mon_bin="$TMP_DIR/monitors/urunc/bin"
 for m in $MONITORS; do
     case "$m" in
+        hvi) install -m 0755 "$DL/hvi" "$STAGE/bin/hvi"; continue ;;
         firecracker|cloud-hypervisor|solo5-hvt|solo5-spt) src_m="$m" ;;
         qemu) src_m="qemu-system-$ARCH_UNAME" ;;
         *) fatal "unknown monitor '$m' in the pins" ;;
@@ -1238,6 +1277,7 @@ destination = "$LOG_DIR/timestamps.log"
 CFG
     for m in $MONITORS; do
         case "$m" in
+            hvi) sect=hvi; bin=hvi ;;
             firecracker) sect=firecracker; bin=firecracker ;;
             cloud-hypervisor) sect=cloud-hypervisor; bin=cloud-hypervisor ;;
             solo5-hvt) sect=hvt; bin=solo5-hvt ;;
@@ -1464,6 +1504,10 @@ URUNIT_REPO=$([ "$VARIANT" = "stock" ] && echo "" || echo "$URUNIT_REPO")
 URUNIT_BRANCH=$([ "$VARIANT" = "stock" ] && echo "" || echo "$URUNIT_BRANCH")
 URUNIT_REF=$URUNIT_REF
 URUNIT_PINNED=$URUNIT_PINNED
+HVI_REPO=$([ -n "$HVI_REF" ] && echo "$HVI_REPO" || echo "")
+HVI_BRANCH=$([ -n "$HVI_REF" ] && echo "$HVI_BRANCH" || echo "")
+HVI_REF=$HVI_REF
+HVI_PINNED=$HVI_PINNED
 INITRD_SOURCE=$([ "$VARIANT" = "stock" ] && echo "" || echo "built:$URUNC_REF")
 PREFIX=$PREFIX
 DATA_DIR=$DATA_DIR
@@ -1491,6 +1535,9 @@ if [ "$URUNC_PINNED" = false ]; then
 fi
 if [ "$URUNIT_PINNED" = false ]; then
     echo "# WARNING: urunit is the tip of $URUNIT_BRANCH at build time, not a pinned commit." >> "$STAGE/pins.env"
+fi
+if [ "$HVI_PINNED" = false ]; then
+    echo "# WARNING: hvi is the tip of $HVI_BRANCH at build time, not a pinned commit." >> "$STAGE/pins.env"
 fi
 
 # Deterministic tar: sorted names, one fixed timestamp, root-owned, fixed
