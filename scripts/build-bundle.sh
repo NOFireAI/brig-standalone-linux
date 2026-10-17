@@ -117,7 +117,7 @@ BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # cloud-hypervisor v54.0 requires, and the hvi monitor with exec over its agent
 # socket. The agent in the initrd is built from this checkout too.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
-URUNC_BRANCH_DEFAULT=feat/hvi-linux-drop-in
+URUNC_BRANCH_DEFAULT=feat/unchanged_containers-exec-fixes
 URUNC_REF_DEFAULT=a1e79599c06a618b426bf9a3f519e6f5fe5119ef
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.4}"
 # urunit: the init in the initrd. What v0.1.0-rc6 to rc8 shipped.
