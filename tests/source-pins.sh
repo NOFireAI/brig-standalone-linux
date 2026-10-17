@@ -1,9 +1,9 @@
 #!/bin/sh
 #
-# Run build-bundle.sh against a stub git and docker, and check which urunc and
-# urunit commits it asks for. Nothing is fetched: the stub git records the ref
-# it was asked to fetch and answers rev-parse with it, the stub docker fakes the
-# urunc build and fails the urunit build, which ends the run.
+# Run build-bundle.sh against a stub git and docker, and check which urunc,
+# hvi and urunit commits it asks for. Nothing is fetched: the stub git records
+# the ref it was asked to fetch and answers rev-parse with it, the stub docker
+# fakes the urunc and hvi builds and fails the urunit build, which ends the run.
 #
 # Needs the tools build-bundle.sh checks for (curl, tar, sha256sum, awk, sed).
 
@@ -19,9 +19,11 @@ command -v sha256sum >/dev/null 2>&1 || skip "build-bundle.sh needs sha256sum"
 
 urunc_pin="$(sed -n 's/^URUNC_REF_DEFAULT=\([0-9a-f]*\)$/\1/p' "$here/scripts/build-bundle.sh")"
 urunit_pin="$(sed -n 's/^URUNIT_REF_DEFAULT=\([0-9a-f]*\)$/\1/p' "$here/scripts/build-bundle.sh")"
+hvi_pin="$(sed -n 's/^HVI_REF_DEFAULT=\([0-9a-f]*\)$/\1/p' "$here/scripts/build-bundle.sh")"
 urunc_branch="$(sed -n 's/^URUNC_BRANCH_DEFAULT=\(.*\)$/\1/p' "$here/scripts/build-bundle.sh")"
 [ "${#urunc_pin}" -eq 40 ] || fail "no URUNC_REF_DEFAULT in build-bundle.sh"
 [ "${#urunit_pin}" -eq 40 ] || fail "no URUNIT_REF_DEFAULT in build-bundle.sh"
+[ "${#hvi_pin}" -eq 40 ] || fail "no HVI_REF_DEFAULT in build-bundle.sh"
 tip=1111111111111111111111111111111111111111
 
 T="$(mktemp -d)"
@@ -50,12 +52,21 @@ esac
 exit 0
 STUB
 
-# docker: the urunc build writes the two binaries the script copies out; the
-# urunit build fails.
+# docker: the urunc and hvi builds write the binaries the script copies out;
+# the urunit build fails.
 cat > "$T/stub/docker" <<'STUB'
 #!/bin/sh
 case "$*" in
     *"apk add"*) exit 1 ;;
+    *"cargo build"*)
+        prev=""
+        for a in "$@"; do
+            case "$prev" in -v) case "$a" in *:/hvi) src="${a%:/hvi}" ;; esac ;; esac
+            prev="$a"
+        done
+        mkdir -p "$src/target/x86_64-unknown-linux-musl/release"
+        echo hvi > "$src/target/x86_64-unknown-linux-musl/release/hvi"
+        exit 0 ;;
     *"make static"*)
         prev=""
         for a in "$@"; do
@@ -78,24 +89,28 @@ build() {
     : > "$T/fetched"
     # Every run ends in a failure, by design: at the stub urunit build or at
     # the check under test.
-    env -u URUNC_REF -u URUNC_BRANCH -u URUNIT_REF -u URUNIT_BRANCH \
+    env -u URUNC_REF -u URUNC_BRANCH -u URUNIT_REF -u URUNIT_BRANCH -u HVI_REF -u HVI_BRANCH \
         PATH="$T/stub:$PATH" "$@" \
         sh "$here/scripts/build-bundle.sh" --arch amd64 --version test --out "$T/dist" \
         > "$T/out.log" 2>&1 || true
 }
 
-# 1. Defaults: both repos are fetched at their pinned commit, by SHA.
+# 1. Defaults: every repo is fetched at its pinned commit, by SHA.
 build
 grep -qx "git -C .*/urunc-src fetch -q --depth 1 origin $urunc_pin" "$T/git.log" \
     || { cat "$T/git.log" "$T/out.log" >&2; fail "urunc was not fetched at its pin"; }
 grep -qx "git -C .*/urunit-src fetch -q --depth 1 origin $urunit_pin" "$T/git.log" \
     || { cat "$T/git.log" "$T/out.log" >&2; fail "urunit was not fetched at its pin"; }
+grep -qx "git -C .*/hvi-src fetch -q --depth 1 origin $hvi_pin" "$T/git.log" \
+    || { cat "$T/git.log" "$T/out.log" >&2; fail "hvi was not fetched at its pin"; }
+grep -q "hvi: checked out brig-sh/hvi-vmm@$hvi_pin (pinned" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "the build log does not name the pinned hvi"; }
 grep -q "urunc: checked out urunc-dev/urunc@$urunc_pin (pinned" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "the build log does not name the pinned urunc"; }
 if grep -q -e "git clone" -e "WARNING" "$T/git.log" "$T/out.log"; then
     fail "a pinned build cloned a branch or warned"
 fi
-ok "a default build fetches urunc and urunit at their pinned commits"
+ok "a default build fetches urunc, hvi and urunit at their pinned commits"
 
 # 2. A checkout that is not the pinned commit fails the build.
 build STUB_HEAD=2222222222222222222222222222222222222222
