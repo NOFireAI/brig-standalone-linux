@@ -45,7 +45,7 @@ by `build-bundle.sh` and packed into the tarball. The installer just unpacks the
 
 No urunc release publishes a binary that boots a generic container. So the build
 compiles one, from `urunc-dev/urunc` at the commit `build-bundle.sh` pins
-(`0b1ef07`, on branch `feat/unchanged_containers-exec-fixes`), in a
+(`074ab76`, on branch `feat/linux-overlay-block`), in a
 `golang:1.26.4` container:
 
 ```console
@@ -85,20 +85,16 @@ boots on macOS. `pins.env` records it as `KERNEL_SOURCE`, by the digest the buil
 pulled. `share/guest/SHA256SUMS` holds the sha256 of the kernel and the initrd,
 and each release publishes it as `<bundle>.boot-assets.sha256`: see the README.
 
-**The initrd is not taken from hull-assets.** brig execs into a guest through an
-in-guest agent, `urunit-agent`, whose wire protocol (`pkg/agentproto`) is a
-contract with the urunc shim. The two agree only when both are built from the same
-urunc commit, and hull-assets' prebuilt initrd carries hull's agent. So the build
-assembles a brig initrd, with urunc's
-`packaging/container-initrd/build-container-initrd.sh`, from four pieces:
+**The initrd is not taken from hull-assets.** brig execs into a guest through the
+exec agent in urunit, whose wire protocol (`pkg/agentproto`) is a contract with
+the urunc shim. The two agree when urunit is the commit the shim's urunc pins in
+`packaging/container-initrd/urunit.pin`, and hull-assets' prebuilt initrd may
+carry another. So the build assembles a brig initrd, with urunc's
+`packaging/container-initrd/build-container-initrd.sh`, from one binary:
 
-- `container-init`, urunc's early-userspace script (mounts the shared rootfs,
-  stages urunit and the agent, `switch_root`s into urunit);
-- `urunit`, the tiny C init that becomes PID 1, built static from
-  `NOFireAI/urunit` at the pinned commit `71bfdee` (branch `urunit_agent`);
-- `urunit-agent`, built from the **same** urunc commit that produced the shim,
-  so the protocol matches by construction;
-- a static `busybox`.
+- `/urunit`, built static from `NOFireAI/urunit` at the commit urunc pins. It is
+  the early init (`/init` and `/vz-init` are links to it), the PID 1 supervisor
+  and the exec agent.
 
 urunc and the initrd ship in one tarball, built together, so their agent commit
 matches by construction. The installer just fetches and unpacks the tarball; it
@@ -111,8 +107,8 @@ runtime boots it, because each fails in a way that does not name itself:
   argv, environment and network identity to a copy of it, and concatenated cpio
   works only while both halves are uncompressed. A gzipped one accepts the append
   and boots without it.
-- `busybox` must be built for this architecture. Under the wrong one it exits 127
-  on every applet and panics init on the first line.
+- `urunit` must be built for this architecture. Under the wrong one the kernel
+  cannot run init and panics.
 
 The annotations that carry the pair are `com.urunc.unikernel.bootKernel` and
 `com.urunc.unikernel.bootInitrd`, pointing into `share/guest/`. hull takes the
@@ -171,11 +167,11 @@ refuses a stock binary, rather than printing a table of zeroes.
 3. Settled: the guest kernel is fetched from `hull-assets`, by the same tags hull
    uses, and checked against its signature; the runtime is built from
    `urunc-dev/urunc` at a pinned commit
-   (`0b1ef07`, on `feat/unchanged_containers-exec-fixes`); and the initrd is
-   built for brig from `NOFireAI/urunit` at a pinned commit (`71bfdee`, on
-   `urunit_agent`) plus urunc's own `packaging/container-initrd`, so its agent
-   matches the shim. Both pins are commits because a branch tip moves with every
-   push; the README's build section says how to move one.
+   (`074ab76`, on `feat/linux-overlay-block`); and the initrd is built for
+   brig from `NOFireAI/urunit` at the commit that urunc pins, with urunc's own
+   `packaging/container-initrd`, so its agent matches the shim. Both are
+   commits because a branch tip moves with every push; the README's build
+   section says how to move one.
 4. Does hvi join `monitors-build`, or does `build-bundle.sh` learn a second
    source?
 5. Is `introspection` a variant at all, or `generic-boot` plus an opt-in flag?
