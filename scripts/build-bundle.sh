@@ -115,28 +115,34 @@ BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # one that boots arm64 guests on cloud-hypervisor's virtio console, one that
 # passes image_type=raw on every --disk (urunc-dev/urunc#1117), which
 # cloud-hypervisor v54.0 requires, and the hvi monitor with exec over its agent
-# socket. The agent in the initrd is built from this checkout too.
+# socket. On top of that, feat/linux-overlay-block: urunit's single binary as
+# the whole initrd, the overlay-block root (com.urunc.unikernel.rootfsMode),
+# and stop signals handed to the guest init.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
-URUNC_BRANCH_DEFAULT=feat/unchanged_containers-exec-fixes
-URUNC_REF_DEFAULT=a1e79599c06a618b426bf9a3f519e6f5fe5119ef
+URUNC_BRANCH_DEFAULT=feat/linux-overlay-block
+URUNC_REF_DEFAULT=074ab76e45b83edf20102dd67dff4260b0435065
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.4}"
-# urunit: the init in the initrd. What v0.1.0-rc6 to rc8 shipped.
-URUNIT_REPO="${URUNIT_REPO:-NOFireAI/urunit}"
-URUNIT_BRANCH_DEFAULT=urunit_agent
-URUNIT_REF_DEFAULT=71bfdeefb7bced121c4e75afa97550523af34152
+# urunit: the one binary of the initrd: early init, supervisor and exec agent.
+# urunc pins it in packaging/container-initrd/urunit.pin, read after the urunc
+# checkout below, so the initrd always matches the shim that talks to it.
+# URUNIT_REPO and URUNIT_REF override the pin.
+# pins.env records it as the branch, and is sourced, so it is one plain word.
+URUNIT_BRANCH_DEFAULT=urunc-urunit.pin
 # hvi: the monitor brig boots a generic container on. No release ships a Linux
 # binary, so it is built here, static against musl, with the toolchain its
-# rust-toolchain.toml pins. It needs no C toolchain on Linux.
+# rust-toolchain.toml pins. It needs no C toolchain on Linux. main as of
+# 590c45d (one --disk per disk with serial=, read-only disks, --fs per export)
+# plus the fix that keeps glibc's malloc from opening files under seccomp.
 HVI_REPO="${HVI_REPO:-brig-sh/hvi-vmm}"
-HVI_BRANCH_DEFAULT=main
-HVI_REF_DEFAULT=380f702b3988dc66b9b005730d2c43f1657fd434
+HVI_BRANCH_DEFAULT=fix/seccomp-glibc-arena
+HVI_REF_DEFAULT=3c8b8fd73045b59689cd906af1a9027a663183c3
 HVI_RUST_IMAGE="${HVI_RUST_IMAGE:-rust:1.95.0}"
 # A branch given without a ref would otherwise build the pinned commit and
 # ignore the branch, so ask which one was meant.
 if [ -n "${URUNC_BRANCH:-}" ] && [ "$URUNC_BRANCH" != "$URUNC_BRANCH_DEFAULT" ] && [ -z "${URUNC_REF+set}" ]; then
     fatal "URUNC_BRANCH=$URUNC_BRANCH is set but URUNC_REF is not. Set URUNC_REF= to build that branch's tip, or URUNC_REF=<commit> to build one commit from it."
 fi
-if [ -n "${URUNIT_BRANCH:-}" ] && [ "$URUNIT_BRANCH" != "$URUNIT_BRANCH_DEFAULT" ] && [ -z "${URUNIT_REF+set}" ]; then
+if [ -n "${URUNIT_BRANCH:-}" ] && [ -z "${URUNIT_REF+set}" ]; then
     fatal "URUNIT_BRANCH=$URUNIT_BRANCH is set but URUNIT_REF is not. Set URUNIT_REF= to build that branch's tip, or URUNIT_REF=<commit> to build one commit from it."
 fi
 if [ -n "${HVI_BRANCH:-}" ] && [ "$HVI_BRANCH" != "$HVI_BRANCH_DEFAULT" ] && [ -z "${HVI_REF+set}" ]; then
@@ -145,7 +151,13 @@ fi
 URUNC_BRANCH="${URUNC_BRANCH:-$URUNC_BRANCH_DEFAULT}"
 URUNC_REF="${URUNC_REF-$URUNC_REF_DEFAULT}"
 URUNIT_BRANCH="${URUNIT_BRANCH:-$URUNIT_BRANCH_DEFAULT}"
-URUNIT_REF="${URUNIT_REF-$URUNIT_REF_DEFAULT}"
+# Unset takes urunc's pin, after the urunc checkout. Set and empty builds the
+# tip of URUNIT_BRANCH.
+URUNIT_FROM_PIN=false
+if [ -z "${URUNIT_REF+set}" ]; then
+    URUNIT_FROM_PIN=true
+    URUNIT_REF=""
+fi
 HVI_BRANCH="${HVI_BRANCH:-$HVI_BRANCH_DEFAULT}"
 HVI_REF="${HVI_REF-$HVI_REF_DEFAULT}"
 # The checkout compares HEAD with the ref, so a ref is a full SHA: a short one,
@@ -158,9 +170,6 @@ for r in "URUNC_REF=$URUNC_REF" "URUNIT_REF=$URUNIT_REF" "HVI_REF=$HVI_REF"; do
     esac
     [ "${#v}" -eq 40 ] || fatal "${r%%=*}='$v' is not a commit: pin a full 40-character SHA"
 done
-# Static musl busybox for the initrd, per arch. Extracted from this image so we
-# do not depend on busybox.net, which publishes 1.35.0 for x86_64 only.
-BUSYBOX_IMAGE="${BUSYBOX_IMAGE:-busybox:1.36.1-musl}"
 # The monitors and virtiofsd come from one monitors-build release. The release
 # is tagged vX.Y.Z and names its per-arch tarball after the monitor versions it
 # carries. monitors-build publishes no checksum file, so each tarball is pinned
@@ -1025,8 +1034,8 @@ esac
 
 # ---- urunit + the brig container-initrd (generic-boot / introspection) -------
 # brig builds its own initrd rather than shipping hull-assets': it execs into a
-# guest through urunit-agent, which has to match the urunc shim's protocol, so
-# the agent is built from the same urunc checkout ($src) as the shim above.
+# guest through the agent in urunit, which has to match the urunc shim's
+# protocol, so urunit is the commit the same urunc checkout ($src) pins.
 URUNIT_PINNED=""
 if [ "$VARIANT" = "stock" ]; then
     # stock boots the unikernel's own init, so there is no urunit to build.
@@ -1035,6 +1044,19 @@ else
     command -v docker >/dev/null 2>&1 || fatal "docker is required to build the brig initrd"
     [ -d "${src:-}" ] || fatal "the urunc checkout is needed to build the initrd (build urunc from source)"
     usrc="$TMP_DIR/urunit-src"
+    if [ "$URUNIT_FROM_PIN" = true ]; then
+        pin="$src/packaging/container-initrd/urunit.pin"
+        [ -f "$pin" ] || fatal "$URUNC_REPO@$URUNC_REF has no urunit.pin; set URUNIT_REPO and URUNIT_REF"
+        pin_repo="$(sed -n 's/^URUNIT_REPO=//p' "$pin")"
+        pin_repo="${pin_repo#https://github.com/}"
+        URUNIT_REPO="${URUNIT_REPO:-${pin_repo%.git}}"
+        URUNIT_REF="$(sed -n 's/^URUNIT_REF=//p' "$pin")"
+        case "$URUNIT_REF" in
+            *[!0-9a-f]*|"") fatal "urunit.pin names '$URUNIT_REF', not a commit" ;;
+        esac
+        [ "${#URUNIT_REF}" -eq 40 ] || fatal "urunit.pin names '$URUNIT_REF', not a full 40-character SHA"
+    fi
+    URUNIT_REPO="${URUNIT_REPO:-NOFireAI/urunit}"
     URUNIT_PINNED=true
     [ -n "$URUNIT_REF" ] || URUNIT_PINNED=false
     ut_commit="$(checkout_source "$URUNIT_REPO" "$URUNIT_BRANCH" "$URUNIT_REF" "$usrc")"
@@ -1046,20 +1068,13 @@ else
         || fatal "urunit build failed"
     [ -s "$usrc/dist/urunit_static" ] || fatal "no urunit_static produced by the build"
 
-    # urunc's build-container-initrd.sh would fetch busybox from busybox.net,
-    # which only publishes 1.35.0 for x86_64 (the aarch64 URL 404s). Supply a
-    # static busybox for the target arch from the official musl image and pass
-    # it via BUSYBOX so the script never downloads.
-    info "extracting a static busybox ($BUSYBOX_IMAGE, linux/$ARCH)"
-    docker run --rm --platform "linux/$ARCH" "$BUSYBOX_IMAGE" cat /bin/busybox > "$DL/busybox" \
-        || fatal "could not extract busybox from $BUSYBOX_IMAGE"
-    [ -s "$DL/busybox" ] || fatal "extracted busybox is empty"
-    chmod 0755 "$DL/busybox"
-
-    info "building the brig container-initrd (urunit + urunit-agent + busybox)"
+    # The single-binary layout: /urunit, with /init and /vz-init linked to it.
+    # URUNIT hands the script the binary built above, so it neither builds
+    # urunit itself nor needs a container tool inside this one.
+    info "building the brig container-initrd (urunit $URUNIT_REF)"
     docker run --rm --platform "linux/$ARCH" \
-        -v "$src":/app -v "$usrc/dist/urunit_static":/urunit-static:ro -v "$DL/busybox":/busybox-in:ro \
-        -w /app -e HOME=/tmp -e URUNIT=/urunit-static -e BUSYBOX=/busybox-in -e TARGET_ARCH="$ARCH_UNAME" "$URUNC_GO_IMAGE" \
+        -v "$src":/app -v "$usrc/dist/urunit_static":/urunit-static:ro \
+        -w /app -e HOME=/tmp -e URUNIT=/urunit-static -e TARGET_ARCH="$ARCH_UNAME" "$URUNC_GO_IMAGE" \
         sh -c "apt-get update >/dev/null 2>&1 && apt-get install -y cpio >/dev/null 2>&1 && git config --global --add safe.directory /app && ./packaging/container-initrd/build-container-initrd.sh /app/dist/container-initrd" \
         || fatal "container-initrd build failed"
     [ -s "$src/dist/container-initrd" ] || fatal "no container-initrd produced"

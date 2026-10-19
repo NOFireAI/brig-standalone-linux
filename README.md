@@ -280,8 +280,9 @@ the three that do not:
 | Component | Source | In the tarball |
 | --- | --- | --- |
 | brig, brigd | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
-| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `0b1ef07` (branch `feat/unchanged_containers-exec-fixes`) | CGO-static, built in a Go container |
-| urunit | built from `NOFireAI/urunit` at commit `71bfdee` (branch `urunit_agent`) | C-static; goes into the initrd |
+| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `074ab76` (branch `feat/linux-overlay-block`) | CGO-static, built in a Go container |
+| urunit | built from `NOFireAI/urunit` at the commit urunc's `packaging/container-initrd/urunit.pin` names (`0b3157d`, branch `stack/7-stop-signals`) | C-static; the whole initrd |
+| hvi | built from `brig-sh/hvi-vmm` at commit `3c8b8fd` (branch `fix/seccomp-glibc-arena`) | musl-static, built in a Rust container |
 | container-initrd | built from the above | assembled for brig, not fetched |
 | guest kernel | `ghcr.io/nofireai/hull-assets` | fetched by digest once its cosign signature checks out; the kernel hull and brig boot |
 | monitors, virtiofsd | `urunc-dev/monitors-build` | fetched, pinned by sha256 |
@@ -296,16 +297,18 @@ uninstaller, and packs the whole `/var/lib/brig/data` tree.
 
 A branch tip is not a release input. It moves with every push, so two builds
 of one bundle version would carry different code. So `build-bundle.sh` pins
-each of the two to one commit, `URUNC_REF_DEFAULT` and `URUNIT_REF_DEFAULT`.
-The build fetches that commit by its SHA, fails if the checkout is anything
-else, and records it in `pins.env` as `URUNC_REF` and `URUNIT_REF`. CI checks
-that record on every bundle it builds.
+urunc to one commit, `URUNC_REF_DEFAULT`, and takes urunit from the commit that
+urunc pins in `packaging/container-initrd/urunit.pin`, so the initrd always
+matches the shim that talks to it. The build fetches each commit by its SHA,
+fails if the checkout is anything else, and records it in `pins.env` as
+`URUNC_REF` and `URUNIT_REF`. CI checks that record on every bundle it builds.
+`URUNIT_REPO` and `URUNIT_REF` override the urunit pin for a one-off build.
 
-The urunc pin is `feat/unchanged_containers` plus the two `urunit-agent` exec
-fixes, urunc-dev/urunc#1059 and urunc-dev/urunc#1060. It also carries a commit
-that sizes a container boot's vCPUs from the container's CPU limit, so
-`brig run --cpus N` gives the guest N vCPUs. The urunit pin is what
-v0.1.0-rc6 to rc8 shipped.
+The urunc pin is `feat/linux-overlay-block`: `feat/unchanged_containers` with
+the exec fixes, the hvi monitor, urunit's single binary as the initrd, the
+overlay-block root (`BRIG_ROOTFS_MODE=overlay-block`) and stop signals handed to
+the guest's init. It also sizes a container boot's vCPUs from the container's
+CPU limit, so `brig run --cpus N` gives the guest N vCPUs.
 
 Moving a pin is a reviewed one-line change to the `*_REF_DEFAULT` line, plus
 its `*_BRANCH_DEFAULT` when the new commit comes from another branch. A one-off
@@ -327,22 +330,22 @@ was meant.
 
 ### Why the initrd is brig's own, not hull-assets'
 
-brig execs into a guest through an in-guest agent, `urunit-agent`, whose wire
-protocol (`pkg/agentproto`) is a contract with the urunc shim. The two agree only
-when both are built from the same urunc commit, and hull-assets' prebuilt initrd
-carries hull's agent. So `build-bundle.sh` builds a brig initrd with urunc's own
-`packaging/container-initrd` tooling, from `urunit`, a `urunit-agent` built from
-the same urunc commit as the shim, a static `busybox`, and urunc's
-`container-init`. The urunc binary and the initrd's agent ship in one tarball, so
-they always match. Only the kernel is fetched rather than built. It is generic,
+brig execs into a guest through the exec agent in urunit, whose wire protocol
+(`pkg/agentproto`) is a contract with the urunc shim. The two agree when urunit
+is the commit the urunc checkout pins, and hull-assets' prebuilt initrd may
+carry another. So `build-bundle.sh` builds a brig initrd with urunc's own
+`packaging/container-initrd` tooling: `/urunit`, one static binary that is the
+early init, the supervisor and the agent, with `/init` and `/vz-init` linked to
+it. The urunc binary and the initrd's agent ship in one tarball, so they always
+match. Only the kernel is fetched rather than built. It is generic,
 and comes from hull-assets on both arches, checked against its signature.
 
 Two properties of the initrd are checked when the build packs it and again when
 the runtime boots it, because each fails in a way that does not name itself:
 `container-initrd` must not be compressed (the runtime appends the container's
 argv, environment and network identity to a copy of it, and a gzipped one accepts
-the append and boots without it), and `busybox` must be built for the target
-architecture, or it panics init on its first line.
+the append and boots without it), and urunit must be built for the target
+architecture, or the kernel cannot run init.
 
 The boot assets land in `share/guest/` and the launcher points brig at them
 through `BRIG_BOOT_ASSETS`, so brig uses the packed assets rather than fetching
