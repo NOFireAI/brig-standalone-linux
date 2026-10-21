@@ -118,11 +118,12 @@ BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # socket. On top of that, feat/linux-overlay-block: urunit's single binary as
 # the whole initrd, the overlay-block root (com.urunc.unikernel.rootfsMode),
 # and stop signals handed to the guest init, which it lets power off when the
-# agent ends the signal session. The stack sits on urunc main as of 6545f17,
-# whose shim serves containerd's task API v3.
+# agent ends the signal session. It writes urunit.conf as the NUL-terminated
+# records of urunc-dev/urunc#1111. The stack sits on urunc main as of
+# 6545f17, whose shim serves containerd's task API v3.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
 URUNC_BRANCH_DEFAULT=feat/linux-overlay-block
-URUNC_REF_DEFAULT=7cf6db049271930a540ee2c03925fd4fd11418f4
+URUNC_REF_DEFAULT=ff1063a4d03cc805212c8dc647eddc4285e8fb1a
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.4}"
 # urunit: the one binary of the initrd: early init, supervisor and exec agent.
 # urunc pins it in packaging/container-initrd/urunit.pin, read after the urunc
