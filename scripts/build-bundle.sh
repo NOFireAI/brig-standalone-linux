@@ -117,10 +117,12 @@ BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # cloud-hypervisor v54.0 requires, and the hvi monitor with exec over its agent
 # socket. On top of that, feat/linux-overlay-block: urunit's single binary as
 # the whole initrd, the overlay-block root (com.urunc.unikernel.rootfsMode),
-# and stop signals handed to the guest init.
+# and stop signals handed to the guest init, which it lets power off when the
+# agent ends the signal session. The stack sits on urunc main as of 6545f17,
+# whose shim serves containerd's task API v3.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
 URUNC_BRANCH_DEFAULT=feat/linux-overlay-block
-URUNC_REF_DEFAULT=074ab76e45b83edf20102dd67dff4260b0435065
+URUNC_REF_DEFAULT=7cf6db049271930a540ee2c03925fd4fd11418f4
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.4}"
 # urunit: the one binary of the initrd: early init, supervisor and exec agent.
 # urunc pins it in packaging/container-initrd/urunit.pin, read after the urunc
@@ -131,11 +133,11 @@ URUNIT_BRANCH_DEFAULT=urunc-urunit.pin
 # hvi: the monitor brig boots a generic container on. No release ships a Linux
 # binary, so it is built here, static against musl, with the toolchain its
 # rust-toolchain.toml pins. It needs no C toolchain on Linux. main as of
-# 590c45d (one --disk per disk with serial=, read-only disks, --fs per export)
-# plus the fix that keeps glibc's malloc from opening files under seccomp.
+# e7d9adf: one --disk per disk with serial=, read-only disks and --fs per
+# export.
 HVI_REPO="${HVI_REPO:-brig-sh/hvi-vmm}"
-HVI_BRANCH_DEFAULT=fix/seccomp-glibc-arena
-HVI_REF_DEFAULT=3c8b8fd73045b59689cd906af1a9027a663183c3
+HVI_BRANCH_DEFAULT=main
+HVI_REF_DEFAULT=e7d9adf064ab8b725c5d0b3498c0968af5c352de
 HVI_RUST_IMAGE="${HVI_RUST_IMAGE:-rust:1.95.0}"
 # A branch given without a ref would otherwise build the pinned commit and
 # ignore the branch, so ask which one was meant.

@@ -280,9 +280,9 @@ the three that do not:
 | Component | Source | In the tarball |
 | --- | --- | --- |
 | brig, brigd | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
-| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `074ab76` (branch `feat/linux-overlay-block`) | CGO-static, built in a Go container |
+| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `7cf6db0` (branch `feat/linux-overlay-block`) | CGO-static, built in a Go container |
 | urunit | built from `NOFireAI/urunit` at the commit urunc's `packaging/container-initrd/urunit.pin` names (`0b3157d`, branch `stack/7-stop-signals`) | C-static; the whole initrd |
-| hvi | built from `brig-sh/hvi-vmm` at commit `3c8b8fd` (branch `fix/seccomp-glibc-arena`) | musl-static, built in a Rust container |
+| hvi | built from `brig-sh/hvi-vmm` at commit `e7d9adf` (branch `main`) | musl-static, built in a Rust container |
 | container-initrd | built from the above | assembled for brig, not fetched |
 | guest kernel | `ghcr.io/nofireai/hull-assets` | fetched by digest once its cosign signature checks out; the kernel hull and brig boot |
 | monitors, virtiofsd | `urunc-dev/monitors-build` | fetched, pinned by sha256 |
