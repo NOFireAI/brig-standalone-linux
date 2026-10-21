@@ -45,7 +45,7 @@ by `build-bundle.sh` and packed into the tarball. The installer just unpacks the
 
 No urunc release publishes a binary that boots a generic container. So the build
 compiles one, from `urunc-dev/urunc` at the commit `build-bundle.sh` pins
-(`7cf6db0`, on branch `feat/linux-overlay-block`), in a
+(`ff1063a`, on branch `feat/linux-overlay-block`), in a
 `golang:1.26.4` container:
 
 ```console
@@ -167,7 +167,7 @@ refuses a stock binary, rather than printing a table of zeroes.
 3. Settled: the guest kernel is fetched from `hull-assets`, by the same tags hull
    uses, and checked against its signature; the runtime is built from
    `urunc-dev/urunc` at a pinned commit
-   (`7cf6db0`, on `feat/linux-overlay-block`); and the initrd is built for
+   (`ff1063a`, on `feat/linux-overlay-block`); and the initrd is built for
    brig from `NOFireAI/urunit` at the commit that urunc pins, with urunc's own
    `packaging/container-initrd`, so its agent matches the shim. Both are
    commits because a branch tip moves with every push; the README's build
