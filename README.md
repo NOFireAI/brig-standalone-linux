@@ -275,14 +275,14 @@ the install does not. Running `build-bundle.sh` by hand to cross-build the other
 architecture needs qemu/binfmt instead of a native runner.
 
 `build-bundle.sh` fetches the components that have upstream releases and builds
-the three that do not:
+the four that do not:
 
 | Component | Source | In the tarball |
 | --- | --- | --- |
 | brig, brigd | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
 | urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `ff1063a` (branch `feat/linux-overlay-block`) | CGO-static, built in a Go container |
 | urunit | built from `NOFireAI/urunit` at the commit urunc's `packaging/container-initrd/urunit.pin` names (`de324cf`, branch `stack/9-nul-without-magic`) | C-static; the whole initrd |
-| hvi | built from `brig-sh/hvi-vmm` at commit `e7d9adf` (branch `main`) | musl-static, built in a Rust container |
+| hvi | built from `brig-sh/hvi-vmm` at commit `7766307` (branch `main`) | musl-static, built in a Rust container |
 | container-initrd | built from the above | assembled for brig, not fetched |
 | guest kernel | `ghcr.io/nofireai/hull-assets` | fetched by digest once its cosign signature checks out; the kernel hull and brig boot |
 | monitors, virtiofsd | `urunc-dev/monitors-build` | fetched, pinned by sha256 |
@@ -309,6 +309,16 @@ the exec fixes, the hvi monitor, urunit's single binary as the initrd, the
 overlay-block root (`BRIG_ROOTFS_MODE=overlay-block`) and stop signals handed to
 the guest's init. It also sizes a container boot's vCPUs from the container's
 CPU limit, so `brig run --cpus N` gives the guest N vCPUs.
+
+The bundle ships hvi first in the monitor list and writes a `[monitors.hvi]`
+section, but it names no default monitor: urunc boots whatever monitor the
+`com.urunc.unikernel.hypervisor` annotation asks for, and brig sets that
+annotation. A brig that knows hvi on Linux boots hvi unless `BRIG_HYPERVISOR`
+names another monitor in the bundle (`cloud-hypervisor` stays installed for
+that); an older brig keeps asking for cloud-hypervisor and gets it. The same
+holds for the overlay-block root: the bundle's urunc understands
+`com.urunc.unikernel.rootfsMode`, and brig sends it when
+`BRIG_ROOTFS_MODE=overlay-block` is set.
 
 Moving a pin is a reviewed one-line change to the `*_REF_DEFAULT` line, plus
 its `*_BRANCH_DEFAULT` when the new commit comes from another branch. A one-off

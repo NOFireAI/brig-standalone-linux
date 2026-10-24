@@ -134,11 +134,14 @@ URUNIT_BRANCH_DEFAULT=urunc-urunit.pin
 # hvi: the monitor brig boots a generic container on. No release ships a Linux
 # binary, so it is built here, static against musl, with the toolchain its
 # rust-toolchain.toml pins. It needs no C toolchain on Linux. main as of
-# e7d9adf: one --disk per disk with serial=, read-only disks and --fs per
-# export.
+# 7766307: one --disk per disk with serial=, read-only disks, --fs per
+# export, a PL031 clock for arm64 guests and ACPI power-off on x86-64. The
+# four commits after e7d9adf touch the built-in virtio-fs server and HVF,
+# neither of which the Linux build compiles (exports go through virtiofsd),
+# so the Linux binary is the one e7d9adf built. hull pins the same commit.
 HVI_REPO="${HVI_REPO:-brig-sh/hvi-vmm}"
 HVI_BRANCH_DEFAULT=main
-HVI_REF_DEFAULT=e7d9adf064ab8b725c5d0b3498c0968af5c352de
+HVI_REF_DEFAULT=7766307014a1be3e9e4b023ae15080e733ece5e3
 HVI_RUST_IMAGE="${HVI_RUST_IMAGE:-rust:1.95.0}"
 # A branch given without a ref would otherwise build the pinned commit and
 # ignore the branch, so ask which one was meant.
