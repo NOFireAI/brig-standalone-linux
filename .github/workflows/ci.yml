@@ -143,16 +143,27 @@ jobs:
           esac
           grep -q "^ROOTLESS=$want$" "$p" \
             || { echo "pins.env does not say ROOTLESS=$want"; exit 1; }
-          # urunc, urunit and hvi are built from pinned commits, and the build
+          # urunc, hvi and urunit are built from pinned commits, and the build
           # fails if the checkout is anything else. This checks the record: the
           # commits in pins.env are the ones the script pins.
-          for c in URUNC URUNIT HVI; do
+          for c in URUNC HVI; do
             want="$(sed -n "s/^${c}_REF_DEFAULT=\([0-9a-f]\{40\}\)$/\1/p" scripts/build-bundle.sh)"
             [ -n "$want" ] || { echo "no ${c}_REF_DEFAULT in build-bundle.sh"; exit 1; }
             grep -E "^${c}_(REF|PINNED)=" "$p"
             grep -qx "${c}_REF=$want" "$p" || { echo "pins.env does not carry ${c}_REF=$want"; exit 1; }
             grep -qx "${c}_PINNED=true" "$p" || { echo "pins.env does not say ${c}_PINNED=true"; exit 1; }
           done
+          # urunit has no pin of its own here: the build reads it from the
+          # pinned urunc commit's packaging/container-initrd/urunit.pin. Read
+          # that file at the recorded urunc commit and compare.
+          urunc_repo="$(sed -n 's/^URUNC_REPO=//p' "$p")"
+          urunc_ref="$(sed -n 's/^URUNC_REF=//p' "$p")"
+          want="$(curl -fsSL "https://raw.githubusercontent.com/$urunc_repo/$urunc_ref/packaging/container-initrd/urunit.pin" \
+            | sed -n 's/^URUNIT_REF=\([0-9a-f]\{40\}\)$/\1/p')"
+          [ -n "$want" ] || { echo "$urunc_repo@$urunc_ref has no urunit.pin naming a commit"; exit 1; }
+          grep -E "^URUNIT_(REF|PINNED)=" "$p"
+          grep -qx "URUNIT_REF=$want" "$p" || { echo "pins.env does not carry URUNIT_REF=$want, urunc's pin"; exit 1; }
+          grep -qx "URUNIT_PINNED=true" "$p" || { echo "pins.env does not say URUNIT_PINNED=true"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
