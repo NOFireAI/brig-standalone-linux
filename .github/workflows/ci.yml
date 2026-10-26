@@ -17,7 +17,7 @@ jobs:
   shell:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check POSIX syntax
         run: |
@@ -97,7 +97,7 @@ jobs:
             flag: '--rootless'
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build a generic-boot bundle (${{ matrix.arch }}, ${{ matrix.rootless }})
         env:
@@ -165,7 +165,7 @@ jobs:
           grep -qx "URUNIT_REF=$want" "$p" || { echo "pins.env does not carry URUNIT_REF=$want, urunc's pin"; exit 1; }
           grep -qx "URUNIT_PINNED=true" "$p" || { echo "pins.env does not say URUNIT_PINNED=true"; exit 1; }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bundle-${{ matrix.arch }}-${{ matrix.rootless }}
           path: dist/*
