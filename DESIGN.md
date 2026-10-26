@@ -38,7 +38,7 @@ now done and is what `install.sh` and `scripts/build-bundle.sh` produce.
   `feat/linux-overlay-block`, CGO static, so native per arch under
   qemu/binfmt), urunit (from `NOFireAI/urunit` at the commit urunc's
   `urunit.pin` names, C static), hvi (from `brig-sh/hvi-vmm` at commit
-  `7766307` on `main`, Rust, static against musl, no C toolchain needed),
+  `24dc2c5` on `main`, Rust, static against musl, no C toolchain needed),
   and the brig `container-initrd`. The sources are
   pinned to a commit, not to a branch: a branch tip moves with every push, so it
   is not a release input. The README's build section says how to move a pin.

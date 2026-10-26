@@ -282,7 +282,7 @@ the four that do not:
 | brig, brigd | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
 | urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `ff1063a` (branch `feat/linux-overlay-block`) | CGO-static, built in a Go container |
 | urunit | built from `NOFireAI/urunit` at the commit urunc's `packaging/container-initrd/urunit.pin` names (`de324cf`, branch `stack/9-nul-without-magic`) | C-static; the whole initrd |
-| hvi | built from `brig-sh/hvi-vmm` at commit `7766307` (branch `main`) | musl-static, built in a Rust container |
+| hvi | built from `brig-sh/hvi-vmm` at commit `24dc2c5` (branch `main`) | musl-static, built in a Rust container |
 | container-initrd | built from the above | assembled for brig, not fetched |
 | guest kernel | `ghcr.io/nofireai/hull-assets` | fetched by digest once its cosign signature checks out; the kernel hull and brig boot |
 | monitors, virtiofsd | `urunc-dev/monitors-build` | fetched, pinned by sha256 |
