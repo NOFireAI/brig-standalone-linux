@@ -94,7 +94,7 @@ done
 # The brig release this bundle carries. On Linux it is the brig a user gets,
 # so it is pinned like every other component. Bump it with the brig release a
 # bundle is cut for. BRIG_VERSION=latest still works for a local build.
-BRIG_VERSION="${BRIG_VERSION:-v0.4.0}"
+BRIG_VERSION="${BRIG_VERSION:-v0.4.1}"
 BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # urunc and urunit have no release that carries what brig needs, so they are
 # built from source, and the source is pinned to one commit each. A branch tip
@@ -134,14 +134,14 @@ URUNIT_BRANCH_DEFAULT=urunc-urunit.pin
 # hvi: the monitor brig boots a generic container on. No release ships a Linux
 # binary, so it is built here, static against musl, with the toolchain its
 # rust-toolchain.toml pins. It needs no C toolchain on Linux. main as of
-# 7766307: one --disk per disk with serial=, read-only disks, --fs per
-# export, a PL031 clock for arm64 guests and ACPI power-off on x86-64. The
-# four commits after e7d9adf touch the built-in virtio-fs server and HVF,
-# neither of which the Linux build compiles (exports go through virtiofsd),
-# so the Linux binary is the one e7d9adf built. hull pins the same commit.
+# 24dc2c5: one --disk per disk with serial=, read-only disks, --fs per
+# export, a PL031 clock for arm64 guests, ACPI power-off on x86-64, and the
+# vsock fix that ends each direction of a connection on its own
+# (brig-sh/hvi-vmm#266), without which a guest's output after the host
+# half-closes its side could be lost.
 HVI_REPO="${HVI_REPO:-brig-sh/hvi-vmm}"
 HVI_BRANCH_DEFAULT=main
-HVI_REF_DEFAULT=7766307014a1be3e9e4b023ae15080e733ece5e3
+HVI_REF_DEFAULT=24dc2c5f643ae23551ceb158600676c33636a21f
 HVI_RUST_IMAGE="${HVI_RUST_IMAGE:-rust:1.95.0}"
 # A branch given without a ref would otherwise build the pinned commit and
 # ignore the branch, so ask which one was meant.
@@ -208,7 +208,7 @@ COSIGN_SHA_LINUX_ARM64="c5d324e091826b0d7a78eb16fef316450b4eb9aaec045611c08ba06f
 MONITORS="${MONITORS:-hvi firecracker cloud-hypervisor solo5-hvt solo5-spt}"
 ASSETS_REGISTRY="${ASSETS_REGISTRY:-ghcr.io}"
 ASSETS_REPO="${ASSETS_REPO:-nofireai/hull-assets}"
-ASSETS_VERSION="${ASSETS_VERSION:-0.1.9}"
+ASSETS_VERSION="${ASSETS_VERSION:-0.1.10}"
 # Who signs hull-assets: the identity brig checks before it boots a kernel from
 # there. The build checks the same one before it packs the kernel.
 ASSETS_SIGNER_DEFAULT='^https://github\.com/NOFireAI/hull-assets/\.github/workflows/build-assets\.yml@refs/heads/main$'

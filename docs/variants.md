@@ -173,7 +173,7 @@ refuses a stock binary, rather than printing a table of zeroes.
    commits because a branch tip moves with every push; the README's build
    section says how to move one.
 4. Settled for now: `build-bundle.sh` builds hvi from `brig-sh/hvi-vmm` at a
-   pinned commit (`7766307`, on `main`), static against musl in a Rust
+   pinned commit (`24dc2c5`, on `main`), static against musl in a Rust
    container, since hvi-vmm publishes no release binary. Moving it into
    `monitors-build` stays open, and would turn the build step into a fetch.
 5. Is `introspection` a variant at all, or `generic-boot` plus an opt-in flag?
