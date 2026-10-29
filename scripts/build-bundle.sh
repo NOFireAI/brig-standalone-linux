@@ -120,11 +120,11 @@ BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # and stop signals handed to the guest init, which it lets power off when the
 # agent ends the signal session. It writes urunit.conf as the NUL-terminated
 # records of urunc-dev/urunc#1111. The stack sits on urunc main as of
-# 9f8c46d, with the bind-mount fixes of urunc-dev/urunc#1150, and presses a
+# 89dfe8d, with the bind-mount fixes of urunc-dev/urunc#1150, and presses a
 # cloud-hypervisor guest's power button when its init cannot take the signal.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
 URUNC_BRANCH_DEFAULT=feat/linux-hvi-v050
-URUNC_REF_DEFAULT=0f841314aa6477c9e22442f0034abe42763eed82
+URUNC_REF_DEFAULT=e53681c26511606afee47ebce27fffabca6e2b73
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.8}"
 # urunit: the one binary of the initrd: early init, supervisor and exec agent.
 # urunc pins it in packaging/container-initrd/urunit.pin, read after the urunc
