@@ -280,7 +280,7 @@ the four that do not:
 | Component | Source | In the tarball |
 | --- | --- | --- |
 | brig, brigd | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
-| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `ff1063a` (branch `feat/linux-overlay-block`) | CGO-static, built in a Go container |
+| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `0f84131` (branch `feat/linux-hvi-v050`) | CGO-static, built in a Go container |
 | urunit | built from `NOFireAI/urunit` at the commit urunc's `packaging/container-initrd/urunit.pin` names (`de324cf`, branch `stack/9-nul-without-magic`) | C-static; the whole initrd |
 | hvi | built from `brig-sh/hvi-vmm` at commit `24dc2c5` (branch `main`) | musl-static, built in a Rust container |
 | container-initrd | built from the above | assembled for brig, not fetched |
@@ -304,7 +304,7 @@ fails if the checkout is anything else, and records it in `pins.env` as
 `URUNC_REF` and `URUNIT_REF`. CI checks that record on every bundle it builds.
 `URUNIT_REPO` and `URUNIT_REF` override the urunit pin for a one-off build.
 
-The urunc pin is `feat/linux-overlay-block`: `feat/unchanged_containers` with
+The urunc pin is `feat/linux-hvi-v050`: `feat/unchanged_containers` with
 the exec fixes, the hvi monitor, urunit's single binary as the initrd, the
 overlay-block root (`BRIG_ROOTFS_MODE=overlay-block`) and stop signals handed to
 the guest's init. It also sizes a container boot's vCPUs from the container's
