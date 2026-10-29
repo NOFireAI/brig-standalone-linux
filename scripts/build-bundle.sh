@@ -124,7 +124,7 @@ BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # cloud-hypervisor guest's power button when its init cannot take the signal.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
 URUNC_BRANCH_DEFAULT=feat/linux-hvi-v050
-URUNC_REF_DEFAULT=66f15963212dd4e3a734c5f39b8992e310d1a161
+URUNC_REF_DEFAULT=3c00b69ff9ac1b8bb260975cdc63d18a7043558b
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.8}"
 # urunit: the one binary of the initrd: early init, supervisor and exec agent.
 # urunc pins it in packaging/container-initrd/urunit.pin, read after the urunc
