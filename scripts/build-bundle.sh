@@ -115,16 +115,17 @@ BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # one that boots arm64 guests on cloud-hypervisor's virtio console, one that
 # passes image_type=raw on every --disk (urunc-dev/urunc#1117), which
 # cloud-hypervisor v54.0 requires, and the hvi monitor with exec over its agent
-# socket. On top of that, feat/linux-overlay-block: urunit's single binary as
+# socket. On top of that, feat/linux-hvi-v050: urunit's single binary as
 # the whole initrd, the overlay-block root (com.urunc.unikernel.rootfsMode),
 # and stop signals handed to the guest init, which it lets power off when the
 # agent ends the signal session. It writes urunit.conf as the NUL-terminated
 # records of urunc-dev/urunc#1111. The stack sits on urunc main as of
-# 6545f17, whose shim serves containerd's task API v3.
+# 9f8c46d, with the bind-mount fixes of urunc-dev/urunc#1150, and presses a
+# cloud-hypervisor guest's power button when its init cannot take the signal.
 URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
-URUNC_BRANCH_DEFAULT=feat/linux-overlay-block
-URUNC_REF_DEFAULT=ff1063a4d03cc805212c8dc647eddc4285e8fb1a
-URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.4}"
+URUNC_BRANCH_DEFAULT=feat/linux-hvi-v050
+URUNC_REF_DEFAULT=0f841314aa6477c9e22442f0034abe42763eed82
+URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.8}"
 # urunit: the one binary of the initrd: early init, supervisor and exec agent.
 # urunc pins it in packaging/container-initrd/urunit.pin, read after the urunc
 # checkout below, so the initrd always matches the shim that talks to it.
