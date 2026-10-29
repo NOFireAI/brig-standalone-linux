@@ -34,7 +34,7 @@ now done and is what `install.sh` and `scripts/build-bundle.sh` produce.
   above are not configurable at install time.
 - **Why four things are built (at release).** Most components are upstream release
   artifacts. Four have no upstream release and are compiled in the build: urunc
-  (from `urunc-dev/urunc` at commit `0f84131`, on
+  (from `urunc-dev/urunc` at commit `e53681c`, on
   `feat/linux-hvi-v050`, CGO static, so native per arch under
   qemu/binfmt), urunit (from `NOFireAI/urunit` at the commit urunc's
   `urunit.pin` names, C static), hvi (from `brig-sh/hvi-vmm` at commit
