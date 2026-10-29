@@ -280,7 +280,7 @@ the four that do not:
 | Component | Source | In the tarball |
 | --- | --- | --- |
 | brig, brigd | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
-| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `66f1596` (branch `feat/linux-hvi-v050`) | CGO-static, built in a Go container |
+| urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `3c00b69` (branch `feat/linux-hvi-v050`) | CGO-static, built in a Go container |
 | urunit | built from `NOFireAI/urunit` at the commit urunc's `packaging/container-initrd/urunit.pin` names (`de324cf`, branch `stack/9-nul-without-magic`) | C-static; the whole initrd |
 | hvi | built from `brig-sh/hvi-vmm` at commit `24dc2c5` (branch `main`) | musl-static, built in a Rust container |
 | container-initrd | built from the above | assembled for brig, not fetched |
