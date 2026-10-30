@@ -106,7 +106,8 @@ $ sha256sum -c checksums.txt --ignore-missing
 ```
 /var/lib/brig/
   data/                    immutable, unpacked from the tarball:
-    bin/            brig, brigd, urunc, containerd-shim-urunc-v2, containerd, ctr,
+    bin/            brig, brigd, brig-broker (from a brig release that carries it),
+                    urunc, containerd-shim-urunc-v2, containerd, ctr,
                     runc, nerdctl, cosign, oras, hvi, firecracker,
                     cloud-hypervisor, solo5-hvt, solo5-spt, brig-ctl,
                     brig-pool-up, brig-uninstall.sh
@@ -280,7 +281,7 @@ the three that do not:
 
 | Component | Source | In the tarball |
 | --- | --- | --- |
-| brig, brigd | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
+| brig, brigd, brig-broker | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
 | urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `3c00b69` (branch `feat/linux-hvi-v050`) | CGO-static, built in a Go container |
 | urunit | built from `NOFireAI/urunit` at the commit urunc's `packaging/container-initrd/urunit.pin` names (`48a61bd`, branch `stack/10-acpi-power-button`) | C-static; the whole initrd |
 | hvi | `brig-sh/hvi-vmm` release `v0.1.0-rc.1` (commit `65570c7`), the one hull ships on macOS | fetched, musl-static; its `SHA256SUMS` cosign-verified against hvi-vmm's release workflow, the tarball pinned by sha256 |

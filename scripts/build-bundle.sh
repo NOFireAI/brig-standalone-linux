@@ -6,7 +6,8 @@
 # Build the self-contained brig bundle for one architecture -- the single tarball
 # install.sh fetches and unpacks. This script is where all the building happens.
 #
-# The tarball is a complete /var/lib/brig/data tree: brig and brigd, cosign and oras, the
+# The tarball is a complete /var/lib/brig/data tree: brig and brigd (and brig-broker,
+# from a brig release that carries it), cosign and oras, the
 # private-containerd stack (containerd, ctr, runc, nerdctl, CNI), the microVM
 # monitors, the urunc runtime, the guest kernel and a brig-built initrd, plus
 # every config file, systemd unit, wrapper and the uninstaller. Most components
@@ -1097,6 +1098,17 @@ if [ "$VARIANT" != "stock" ] || [ "${BRIG_IN_STOCK:-true}" = "true" ]; then
     [ -n "$bb" ] || fatal "no brig binary in $b_archive"
     install -m 0755 "$bb" "$STAGE/bin/brig"
     [ -n "$bd" ] && install -m 0755 "$bd" "$STAGE/bin/brigd"
+    # A profile with a route cannot start without it. Releases up to v0.4.1 carry
+    # none, and pins.env records which kind of bundle this is.
+    bk="$(find "$TMP_DIR/brig-unpack" -name brig-broker -type f | head -1)"
+    BRIG_BROKER_INSTALLED=false
+    if [ -n "$bk" ]; then
+        install -m 0755 "$bk" "$STAGE/bin/brig-broker"
+        BRIG_BROKER_INSTALLED=true
+        info "  packaged brig-broker from $b_archive"
+    else
+        info "  no brig-broker in $b_archive: a profile with a route cannot start on this bundle"
+    fi
     comp="$(dirname "$bb")/completions"
     [ -d "$comp" ] && { mkdir -p "$STAGE/share/completions"; cp -a "$comp/." "$STAGE/share/completions/"; }
 fi
@@ -1538,6 +1550,7 @@ MONITORS_RELEASE=$MONITORS_RELEASE
 MONITORS_VERSION=$MONITORS_VERSION
 MONITORS_INSTALLED="$MONITORS"
 VIRTIOFSD_INSTALLED=$VIRTIOFSD
+BRIG_BROKER_INSTALLED=${BRIG_BROKER_INSTALLED:-false}
 CONTAINERD_VERSION=$CONTAINERD_VERSION
 RUNC_VERSION=$RUNC_VERSION
 NERDCTL_VERSION=$NERDCTL_VERSION
