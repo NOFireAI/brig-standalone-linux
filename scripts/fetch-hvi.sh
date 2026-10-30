@@ -77,7 +77,8 @@ rev="$(sed -n 's/^ *"revision": *"\([0-9a-f]*\)".*/\1/p' "$tmp/x/manifest.json")
 [ "$rev" = "$HVI_COMMIT" ] || die "the manifest names commit '$rev', the pin says $HVI_COMMIT"
 want="$(sed -n 's/^ *"hvi": *"\([0-9a-f]*\)".*/\1/p' "$tmp/x/manifest.json")"
 have="$(sha256sum "$tmp/x/hvi" | awk '{print $1}')"
-[ -n "$want" ] && [ "$have" = "$want" ] || die "hvi is $have, the manifest says '$want'"
+[ -n "$want" ] || die "the manifest names no sha256 for hvi"
+[ "$have" = "$want" ] || die "hvi is $have, the manifest says '$want'"
 
 install -m 0755 "$tmp/x/hvi" "$out"
 echo "fetch-hvi: hvi $HVI_VERSION ($HVI_COMMIT, $target), signature and sums verified"
