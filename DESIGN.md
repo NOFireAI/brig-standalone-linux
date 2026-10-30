@@ -32,23 +32,18 @@ now done and is what `install.sh` and `scripts/build-bundle.sh` produce.
   the host. The installer builds nothing, runs no compiler and no docker, and
   fetches nothing else. Because the config files carry the fixed layout, the paths
   above are not configurable at install time.
-- **Why three things are built (at release).** Most components are upstream release
+- **Why urunc is built (at release).** Most components are upstream release
   artifacts, hvi among them (`brig-sh/hvi-vmm` `v0.1.0-rc.1`, cosign-verified).
-  Three have no upstream release and are compiled in the build: urunc
-  (from `urunc-dev/urunc` at commit `3c00b69`, on
-  `feat/linux-hvi-v050`, CGO static, so native per arch under
-  qemu/binfmt), urunit (from `NOFireAI/urunit` at the commit urunc's
-  `urunit.pin` names, C static) and the brig `container-initrd`. The sources are
-  pinned to a commit, not to a branch: a branch tip moves with every push, so it
-  is not a release input. The README's build section says how to move a pin.
-  brig execs into a guest through the agent in urunit, whose protocol must match
-  the urunc shim, so hull-assets' prebuilt initrd is not usable; the build
-  assembles a brig initrd of urunit alone, the early init, supervisor and agent
-  in one static binary, at the commit the shim's urunc pins. The kernel is still fetched, not built: from
-  `ghcr.io/nofireai/hull-assets` on both arches, by digest, once its cosign
-  signature checks out.
-  Because urunc and the initrd ship in one tarball built together, their agent
-  commit matches by construction.
+  urunc has no release that carries what brig needs, so the build compiles it
+  from `urunc-dev/urunc` at commit `3c00b69`, on `feat/linux-hvi-v050` (CGO
+  static, so native per arch under qemu/binfmt). The source is pinned to a
+  commit, since a branch tip moves with every push. The README's build section
+  says how to move the pin.
+  The kernel and the initrd are fetched from `ghcr.io/nofireai/hull-assets` on
+  both arches, by digest, once its cosign signature checks out. The initrd is
+  urunit alone, and its agent has to match the urunc shim. hull-assets records
+  the urunc it built from in its signed `bundle.json`, and the build refuses a
+  bundle whose urunc is not the one in the tarball.
 - **The installer's own job** is the host wiring the tarball cannot carry: create
   the state and socket dirs, provision the device-mapper pool when the kernel
   supports it (brig defaults to overlayfs; `CONTAINERD_SNAPSHOTTER=devmapper`

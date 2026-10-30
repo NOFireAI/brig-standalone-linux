@@ -60,13 +60,11 @@ involved; only a hand cross-build on one host falls back to qemu/binfmt. The
 result, urunc and its shim, goes into the tarball. `install.sh` never builds; it
 unpacks what the build produced.
 
-### The kernel is fetched, the initrd is built for brig
+### The kernel and the initrd are fetched
 
-The two files a generic boot names are the guest kernel and the initrd, and they
-come from different places.
-
-**The kernel** is fetched from hull-assets on both arches, the OCI artifact hull
-and brig already boot from, one tag per platform, pulled with the bundled `oras`:
+The two files a generic boot names are the guest kernel and the initrd. Both are
+fetched from hull-assets on both arches, the OCI artifact hull and brig already
+boot from, one tag per platform, pulled with the bundled `oras`:
 
 ```
 ghcr.io/nofireai/hull-assets:<version>-linux-<arch>   immutable
@@ -77,38 +75,35 @@ The build resolves the `<version>` tag once. The bundled `cosign` checks the
 signature on the digest it names, against the identity brig checks: the
 `build-assets.yml` workflow in `NOFireAI/hull-assets`. The build then pulls that
 digest. The artifact's layers are the files themselves, each named by its
-`org.opencontainers.image.title`, so the kernel's sha256 is its layer digest in
+`org.opencontainers.image.title`, so each file's sha256 is its layer digest in
 the signed manifest.
 
 The kernel is generic and not brig-specific. On arm64 it is the same file hull
-boots on macOS. `pins.env` records it as `KERNEL_SOURCE`, by the digest the build
-pulled. `share/guest/SHA256SUMS` holds the sha256 of the kernel and the initrd,
-and each release publishes it as `<bundle>.boot-assets.sha256`: see the README.
+boots on macOS. `pins.env` records the bundle as `KERNEL_SOURCE` and
+`INITRD_SOURCE`, by the digest the build pulled. `share/guest/SHA256SUMS` holds
+the sha256 of the kernel and the initrd, and each release publishes it as
+`<bundle>.boot-assets.sha256`: see the README.
 
-**The initrd is not taken from hull-assets.** brig execs into a guest through the
-exec agent in urunit, whose wire protocol (`pkg/agentproto`) is a contract with
-the urunc shim. The two agree when urunit is the commit the shim's urunc pins in
-`packaging/container-initrd/urunit.pin`, and hull-assets' prebuilt initrd may
-carry another. So the build assembles a brig initrd, with urunc's
-`packaging/container-initrd/build-container-initrd.sh`, from one binary:
+**The initrd has to match urunc.** brig execs into a guest through the exec
+agent in urunit, whose wire protocol (`pkg/agentproto`) is a contract with the
+urunc shim. Since hull-assets `0.1.11`, its initrd is one binary:
 
-- `/urunit`, built static from `NOFireAI/urunit` at the commit urunc pins. It is
-  the early init (`/init` and `/vz-init` are links to it), the PID 1 supervisor
-  and the exec agent.
+- `/urunit`, static, from `NOFireAI/urunit` at the commit urunc pins in
+  `packaging/container-initrd/urunit.pin`. It is the early init (`/init`,
+  `/vz-init` and `/urunit-agent` are links to it), the PID 1 supervisor and the
+  exec agent.
 
-urunc and the initrd ship in one tarball, built together, so their agent commit
-matches by construction. The installer just fetches and unpacks the tarball; it
-never builds an initrd.
+hull-assets records the urunc it built from in its signed `bundle.json`, as
+`sources.urunc.ref`. `scripts/check-assets.sh` refuses the bundle unless that is
+the urunc this tarball carries. hull-assets does not record its urunit commit
+yet; when it does, the check requires the commit urunc pins. hull-assets' own
+build checks that urunit is built for the target architecture. The installer
+just fetches and unpacks the tarball; it never builds an initrd.
 
-**Two properties of the initrd are checked**, at build time and again when the
-runtime boots it, because each fails in a way that does not name itself:
-
-- `container-initrd` must not be compressed. The runtime appends the container's
-  argv, environment and network identity to a copy of it, and concatenated cpio
-  works only while both halves are uncompressed. A gzipped one accepts the append
-  and boots without it.
-- `urunit` must be built for this architecture. Under the wrong one the kernel
-  cannot run init and panics.
+**The initrd must not be compressed**, and the build and the runtime both check
+it. The runtime appends the container's argv, environment and network identity
+to a copy of it, and concatenated cpio works only while both halves are
+uncompressed. A gzipped one accepts the append and boots without it.
 
 The annotations that carry the pair are `com.urunc.unikernel.bootKernel` and
 `com.urunc.unikernel.bootInitrd`, pointing into `share/guest/`. hull takes the
@@ -166,11 +161,10 @@ refuses a stock binary, rather than printing a table of zeroes.
 3. Settled: the guest kernel is fetched from `hull-assets`, by the same tags hull
    uses, and checked against its signature; the runtime is built from
    `urunc-dev/urunc` at a pinned commit
-   (`3c00b69`, on `feat/linux-hvi-v050`); and the initrd is built for
-   brig from `NOFireAI/urunit` at the commit that urunc pins, with urunc's own
-   `packaging/container-initrd`, so its agent matches the shim. Both are
-   commits because a branch tip moves with every push; the README's build
-   section says how to move one.
+   (`3c00b69`, on `feat/linux-hvi-v050`); and the initrd comes from the same
+   hull-assets bundle as the kernel, which the build refuses unless it was built
+   from that urunc. urunc is pinned to a commit because a branch tip moves with
+   every push; the README's build section says how to move it.
 4. Settled: `build-bundle.sh` fetches hvi from the `brig-sh/hvi-vmm` release
    hull ships on macOS (`v0.1.0-rc.1`). `scripts/fetch-hvi.sh` checks the
    cosign signature on its `SHA256SUMS`, the pinned sha256 of the tarball and

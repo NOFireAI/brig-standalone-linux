@@ -277,16 +277,14 @@ the install does not. Running `build-bundle.sh` by hand to cross-build the other
 architecture needs qemu/binfmt instead of a native runner.
 
 `build-bundle.sh` fetches the components that have upstream releases and builds
-the three that do not:
+urunc, which has none:
 
 | Component | Source | In the tarball |
 | --- | --- | --- |
 | brig, brigd, brig-broker | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
 | urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `3c00b69` (branch `feat/linux-hvi-v050`) | CGO-static, built in a Go container |
-| urunit | built from `NOFireAI/urunit` at the commit urunc's `packaging/container-initrd/urunit.pin` names (`48a61bd`, branch `stack/10-acpi-power-button`) | C-static; the whole initrd |
 | hvi | `brig-sh/hvi-vmm` release `v0.1.0-rc.1` (commit `65570c7`), the one hull ships on macOS | fetched, musl-static; its `SHA256SUMS` cosign-verified against hvi-vmm's release workflow, the tarball pinned by sha256 |
-| container-initrd | built from the above | assembled for brig, not fetched |
-| guest kernel | `ghcr.io/nofireai/hull-assets` | fetched by digest once its cosign signature checks out; the kernel hull and brig boot |
+| guest kernel, container-initrd | `ghcr.io/nofireai/hull-assets` `0.1.11` | fetched by digest once its cosign signature checks out; the initrd is urunit. urunc's `packaging/container-initrd/urunit.pin` names `48a61bd`; hull-assets `0.1.11` does not record its urunit, so the bundle records that commit as `urunit_expected`. The build refuses a hull-assets bundle built from another urunc |
 | monitors, virtiofsd | `urunc-dev/monitors-build` | fetched, pinned by sha256 |
 | containerd, runc, nerdctl, CNI | upstream releases | fetched, upstream checksums |
 | cosign | `sigstore/cosign` | fetched, pinned by sha256 |
@@ -295,16 +293,15 @@ the three that do not:
 Then it generates the config files, systemd units, `brig-ctl` and the
 uninstaller, and packs the whole `/var/lib/brig/data` tree.
 
-### urunc and urunit are pinned to a commit
+### urunc is pinned to a commit
 
 A branch tip is not a release input. It moves with every push, so two builds
 of one bundle version would carry different code. So `build-bundle.sh` pins
-urunc to one commit, `URUNC_REF_DEFAULT`, and takes urunit from the commit that
-urunc pins in `packaging/container-initrd/urunit.pin`, so the initrd always
-matches the shim that talks to it. The build fetches each commit by its SHA,
-fails if the checkout is anything else, and records it in `pins.env` as
-`URUNC_REF` and `URUNIT_REF`. CI checks that record on every bundle it builds.
-`URUNIT_REPO` and `URUNIT_REF` override the urunit pin for a one-off build.
+urunc to one commit, `URUNC_REF_DEFAULT`. The build fetches that commit by its
+SHA, fails if the checkout is anything else, and records it in `pins.env` as
+`URUNC_REF`. It also records `URUNIT_REF`, the urunit commit that urunc pins in
+`packaging/container-initrd/urunit.pin`. CI checks that record on every bundle
+it builds.
 
 The urunc pin is `feat/linux-hvi-v050`: `feat/unchanged_containers` with
 the exec fixes, the hvi monitor, urunit's single binary as the initrd, the
@@ -338,26 +335,28 @@ $ URUNC_REF= URUNC_BRANCH=feat/unchanged_containers scripts/build-bundle.sh --ar
 ```
 
 A branch given without a ref is refused, since it is unclear which of the two
-was meant.
+was meant. A tip build also has to match the guest assets (below), so it fails
+unless `ASSETS_VERSION` names a hull-assets release built from that tip.
 
-### Why the initrd is brig's own, not hull-assets'
+### The initrd comes from hull-assets, checked against urunc
 
 brig execs into a guest through the exec agent in urunit, whose wire protocol
-(`pkg/agentproto`) is a contract with the urunc shim. The two agree when urunit
-is the commit the urunc checkout pins, and hull-assets' prebuilt initrd may
-carry another. So `build-bundle.sh` builds a brig initrd with urunc's own
-`packaging/container-initrd` tooling: `/urunit`, one static binary that is the
-early init, the supervisor and the agent, with `/init` and `/vz-init` linked to
-it. The urunc binary and the initrd's agent ship in one tarball, so they always
-match. Only the kernel is fetched rather than built. It is generic,
-and comes from hull-assets on both arches, checked against its signature.
+(`pkg/agentproto`) is a contract with the urunc shim. Since hull-assets
+`0.1.11`, its initrd is urunit's single binary: `/urunit`, the early init, the
+supervisor and the agent, with `/init`, `/vz-init` and `/urunit-agent` linked to
+it. hull-assets builds it from the urunit commit that urunc pins, and records
+that urunc in the `bundle.json` it signs, as `sources.urunc.ref`.
 
-Two properties of the initrd are checked when the build packs it and again when
-the runtime boots it, because each fails in a way that does not name itself:
-`container-initrd` must not be compressed (the runtime appends the container's
-argv, environment and network identity to a copy of it, and a gzipped one accepts
-the append and boots without it), and urunit must be built for the target
-architecture, or the kernel cannot run init.
+So `build-bundle.sh` takes the kernel and the initrd from the same signed
+hull-assets bundle. `scripts/check-assets.sh` refuses the bundle unless
+`sources.urunc.ref` is the urunc this tarball carries. hull-assets does not
+record its urunit commit yet. When it does, the check also requires it to be the
+one urunc pins.
+
+The initrd must not be compressed. The runtime appends the container's argv,
+environment and network identity to a copy of it, and a gzipped one accepts the
+append and boots without it. The build checks that when it packs the initrd,
+and the runtime checks it again at boot.
 
 The boot assets land in `share/guest/` and the launcher points brig at them
 through `BRIG_BOOT_ASSETS`, so brig uses the packed assets rather than fetching
