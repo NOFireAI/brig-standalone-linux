@@ -1026,7 +1026,9 @@ main() {
         start_note="  started:   brig-containerd.service (systemd --user)"
         case ":$PATH:" in
             *":$LAUNCH_DIR:"*) ;;
-            *) grp_note="  path:      $LAUNCH_DIR is not on your PATH; add it to run brig by name
+            *) grp_note="  path:      $LAUNCH_DIR is not on your PATH. Add it to run brig by name:
+               export PATH=\"$LAUNCH_DIR:\$PATH\"
+             Not $BIN_DIR: the brig there runs without the launcher's environment.
 " ;;
         esac
     else
