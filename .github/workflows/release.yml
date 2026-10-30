@@ -1,8 +1,8 @@
 # Build, sign and publish the self-contained brig bundles.
 #
 # Each architecture is built on a native runner -- amd64 on ubuntu-24.04, arm64
-# on ubuntu-24.04-arm -- so the urunc/urunit/initrd builds run native rather than
-# under qemu. A final job collects both, checksums and signs them, and publishes
+# on ubuntu-24.04-arm -- so the urunc build runs native rather than under
+# qemu. A final job collects both, checksums and signs them, and publishes
 # one release.
 name: release
 
@@ -64,8 +64,8 @@ jobs:
       - name: Build the ${{ matrix.arch }} ${{ matrix.rootless }} bundle
         env:
           # Pin every timestamp in the archives. The fetched components are
-          # byte-identical per pin; the source-built urunc, urunit and initrd
-          # are not guaranteed bit-for-bit across builds.
+          # byte-identical per pin; the source-built urunc is not guaranteed
+          # bit-for-bit across builds.
           SOURCE_DATE_EPOCH: '0'
         run: |
           set -eu

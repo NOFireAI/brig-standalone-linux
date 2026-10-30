@@ -1,10 +1,11 @@
 #!/bin/sh
 #
-# Run build-bundle.sh against a stub git and docker, and check which urunc and
-# urunit commits it asks for. Nothing is fetched: the stub git records the ref
-# it was asked to fetch, answers rev-parse with it and plants the urunit.pin
-# the build reads from the urunc checkout; the stub docker fakes the urunc
-# build and fails the urunit build, which ends the run.
+# Run build-bundle.sh against a stub git, docker and curl, and check which urunc
+# commit it asks for and which urunit commit it records. Nothing is fetched: the
+# stub git records the ref it was asked to fetch, answers rev-parse with it and
+# plants the urunit.pin the build reads from the urunc checkout; the stub docker
+# fakes the urunc build; the stub curl fails the first download, which ends the
+# run.
 #
 # Needs the tools build-bundle.sh checks for (curl, tar, sha256sum, awk, sed).
 
@@ -23,7 +24,7 @@ urunc_branch="$(sed -n 's/^URUNC_BRANCH_DEFAULT=\(.*\)$/\1/p' "$here/scripts/bui
 [ "${#urunc_pin}" -eq 40 ] || fail "no URUNC_REF_DEFAULT in build-bundle.sh"
 tip=1111111111111111111111111111111111111111
 # The urunit commit the stub urunc checkout pins in its urunit.pin. The build
-# has no URUNIT_REF_DEFAULT of its own: it reads that file.
+# has no urunit pin of its own: it reads that file.
 urunit_pin=3333333333333333333333333333333333333333
 
 T="$(mktemp -d)"
@@ -33,7 +34,7 @@ mkdir -p "$T/stub"
 # git: log every call. fetch remembers what it was asked for, and rev-parse
 # HEAD answers with it, or with $STUB_HEAD, or with $tip for a branch. A
 # checkout of the urunc source plants urunit.pin, as the real commit carries
-# one; STUB_NO_PIN=1 leaves it out, and STUB_PIN_REPO replaces its repo.
+# one; STUB_NO_PIN=1 leaves it out.
 cat > "$T/stub/git" <<STUB
 #!/bin/sh
 echo "git \$*" >> "$T/git.log"
@@ -66,12 +67,14 @@ esac
 exit 0
 STUB
 
-# docker: the urunc build writes the binaries the script copies out; the
-# urunit build fails.
-cat > "$T/stub/docker" <<'STUB'
+# docker: the urunc build writes the binaries the script copies out. Anything
+# else is logged and fails: urunit and the initrd are no longer built.
+cat > "$T/stub/docker" <<STUB
 #!/bin/sh
+echo "docker \$*" >> "$T/docker.log"
+STUB
+cat >> "$T/stub/docker" <<'STUB'
 case "$*" in
-    *"apk add"*) exit 1 ;;
     *"make static"*)
         prev=""
         for a in "$@"; do
@@ -85,54 +88,57 @@ case "$*" in
 esac
 exit 1
 STUB
+# curl: every download fails, so the run ends at the first one after urunc.
+printf '#!/bin/sh\nexit 22\n' > "$T/stub/curl"
 chmod 0755 "$T/stub"/*
 
 # build [VAR=value...]: run build-bundle.sh with those variables, output in
 # $T/out.log. URUNC_* and URUNIT_* start unset.
 build() {
     : > "$T/git.log"
+    : > "$T/docker.log"
     : > "$T/fetched"
-    # Every run ends in a failure, by design: at the stub urunit build or at
-    # the check under test.
-    env -u URUNC_REF -u URUNC_BRANCH -u URUNIT_REF -u URUNIT_BRANCH -u HVI_REF -u HVI_BRANCH \
+    # Every run ends in a failure, by design: at the first download or at the
+    # check under test.
+    env -u URUNC_REF -u URUNC_BRANCH -u URUNIT_REF -u URUNIT_BRANCH -u URUNIT_REPO -u HVI_REF -u HVI_BRANCH \
         PATH="$T/stub:$PATH" "$@" \
         sh "$here/scripts/build-bundle.sh" --arch amd64 --version test --out "$T/dist" \
         > "$T/out.log" 2>&1 || true
 }
 
-# 1. Defaults: urunc is fetched at its pinned commit, by SHA; urunit at the
-# commit the urunc checkout's urunit.pin names.
+# 1. Defaults: urunc is fetched at its pinned commit, by SHA. urunit is not
+# fetched or built; the build reads the commit urunc's urunit.pin names.
 build
 grep -qx "git -C .*/urunc-src fetch -q --depth 1 origin $urunc_pin" "$T/git.log" \
     || { cat "$T/git.log" "$T/out.log" >&2; fail "urunc was not fetched at its pin"; }
-grep -qx "git -C .*/urunit-src fetch -q --depth 1 origin $urunit_pin" "$T/git.log" \
-    || { cat "$T/git.log" "$T/out.log" >&2; fail "urunit was not fetched at urunc's pin"; }
-grep -q "urunit: checked out NOFireAI/urunit@$urunit_pin (pinned" "$T/out.log" \
-    || { cat "$T/out.log" >&2; fail "the build log does not name the pinned urunit"; }
 grep -q "urunc: checked out urunc-dev/urunc@$urunc_pin (pinned" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "the build log does not name the pinned urunc"; }
+grep -q "urunit: urunc $urunc_pin pins NOFireAI/urunit@$urunit_pin" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "the build log does not name urunc's urunit pin"; }
+grep -q "failed to download" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "the build did not get past the urunc build"; }
+if grep -q "urunit-src" "$T/git.log"; then fail "urunit was fetched"; fi
+grep -q "make static" "$T/docker.log" || fail "the urunc build did not run"
+if grep -qv "make static" "$T/docker.log"; then
+    cat "$T/docker.log" >&2; fail "docker ran for something other than the urunc build"
+fi
 if grep -q -e "git clone" -e "WARNING" "$T/git.log" "$T/out.log"; then
     fail "a pinned build cloned a branch or warned"
 fi
-ok "a default build fetches urunc and urunit at their pinned commits"
+ok "a default build fetches urunc at its pin and builds no urunit or initrd"
 
-# 1b. URUNIT_REF overrides urunc's pin for one build, and a urunc commit with no
-# urunit.pin is refused rather than guessed.
-other=4444444444444444444444444444444444444444
-build URUNIT_REF=$other
-grep -qx "git -C .*/urunit-src fetch -q --depth 1 origin $other" "$T/git.log" \
-    || { cat "$T/git.log" "$T/out.log" >&2; fail "URUNIT_REF did not override urunc's pin"; }
+# 1b. A urunc commit with no urunit.pin is refused, and so is a pin that names
+# no full commit.
 build STUB_NO_PIN=1
-grep -q "has no urunit.pin" "$T/out.log" \
+grep -q "has no packaging/container-initrd/urunit.pin" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "a urunc commit without urunit.pin was not refused"; }
-ok "URUNIT_REF overrides the pin, and a urunc without one is refused"
+ok "a urunc without a urunit pin is refused"
 
-# 1c. A urunit.pin whose repo is not <owner>/<repo> on GitHub is refused before
-# urunit is fetched.
+# 1c. A urunit.pin whose repo is not <owner>/<repo> on GitHub is refused: the
+# repo goes into pins.env.
 build STUB_PIN_REPO=git@github.com:NOFireAI/urunit.git
 grep -q "URUNIT_REPO='git@github.com:NOFireAI/urunit' is not <owner>/<repo> on GitHub" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "a urunit.pin with an ssh URL was not refused"; }
-if grep -q "urunit-src" "$T/git.log"; then fail "urunit was fetched from a refused repo"; fi
 ok "a urunit.pin repo that is not <owner>/<repo> is refused"
 
 # 2. A checkout that is not the pinned commit fails the build.
@@ -156,21 +162,24 @@ grep -q "URUNC_BRANCH=feat/something-else is set but URUNC_REF is not" "$T/out.l
 [ ! -s "$T/git.log" ] || fail "git ran for a refused build"
 ok "a branch without a ref is refused"
 
-# 4b. URUNIT_REF= with no branch to build the tip of is refused, and so is the
-# hvi source build that no longer exists.
-build URUNIT_REF=
-grep -q "URUNIT_REF= builds a branch tip, but URUNIT_BRANCH names no branch" "$T/out.log" \
-    || { cat "$T/out.log" >&2; fail "URUNIT_REF= without a branch was not refused"; }
-[ ! -s "$T/git.log" ] || fail "git ran for a refused build"
+# 4b. The urunit build knobs are gone, so setting one is refused, and so is
+# the hvi source build that no longer exists.
+for v in URUNIT_REF=4444444444444444444444444444444444444444 URUNIT_REF= \
+    URUNIT_BRANCH=main URUNIT_REPO=NOFireAI/urunit; do
+    build "$v"
+    grep -q "urunit is no longer built here" "$T/out.log" \
+        || { cat "$T/out.log" >&2; fail "$v was not refused"; }
+    [ ! -s "$T/git.log" ] || fail "git ran for a refused build ($v)"
+done
 build HVI_REF=24dc2c5f643ae23551ceb158600676c33636a21f
 grep -q "hvi is no longer built from source" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "HVI_REF was not refused"; }
 [ ! -s "$T/git.log" ] || fail "git ran for a refused build"
-ok "URUNIT_REF= without a branch, and HVI_REF, are refused"
+ok "URUNIT_REF, URUNIT_BRANCH, URUNIT_REPO and HVI_REF are refused"
 
 # 5. A ref that is not a full SHA is refused before anything is fetched.
-build URUNIT_REF=urunit_agent
-grep -q "URUNIT_REF='urunit_agent' is not a commit" "$T/out.log" \
+build URUNC_REF=urunc_agent
+grep -q "URUNC_REF='urunc_agent' is not a commit" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "a branch name as a ref was not refused"; }
 build URUNC_REF=0818ff1
 grep -q "URUNC_REF='0818ff1' is not a commit" "$T/out.log" \

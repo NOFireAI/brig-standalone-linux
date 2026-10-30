@@ -9,11 +9,11 @@
 # The tarball is a complete /var/lib/brig/data tree: brig and brigd (and brig-broker,
 # from a brig release that carries it), cosign and oras, the
 # private-containerd stack (containerd, ctr, runc, nerdctl, CNI), the microVM
-# monitors, the urunc runtime, the guest kernel and a brig-built initrd, plus
-# every config file, systemd unit, wrapper and the uninstaller. Most components
-# are upstream release artifacts, hvi among them. Three are built here because
-# no release ships them: urunc (from urunc-dev/urunc), urunit (from
-# NOFireAI/urunit) and the container-initrd (assembled from urunc and urunit).
+# monitors, the urunc runtime, the guest kernel and initrd, plus every config
+# file, systemd unit, wrapper and the uninstaller. Most components are upstream
+# release artifacts, hvi among them. The kernel and the initrd come from the
+# signed hull-assets bundle. urunc is built here from urunc-dev/urunc, because
+# no urunc release carries what brig needs.
 #
 #   scripts/build-bundle.sh --arch amd64 --version v0.1.0 --out dist
 #   scripts/build-bundle.sh --arch arm64 --version v0.1.0 --variant generic-boot
@@ -23,10 +23,10 @@
 # because a node install driven by root never uses any of it, and a user
 # install cannot work without it.
 #
-# docker is required (the urunc and urunit builds run in containers). Building
-# the arm64 pieces on an amd64 runner (or vice versa) needs binfmt/qemu
-# registered, because the static urunc binary and urunit are CGO/C and are
-# built native inside a target-arch container (docker run --platform).
+# docker is required (the urunc build runs in a container). Building the arm64
+# pieces on an amd64 runner (or vice versa) needs binfmt/qemu registered,
+# because the static urunc binary is CGO and is built native inside a
+# target-arch container (docker run --platform).
 #
 # Produces, under --out:
 #   brig-standalone-<version>-linux-<arch>.tar.gz          (the install tarball)
@@ -97,8 +97,8 @@ done
 # bundle is cut for. BRIG_VERSION=latest still works for a local build.
 BRIG_VERSION="${BRIG_VERSION:-v0.4.1}"
 BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
-# urunc and urunit have no release that carries what brig needs, so they are
-# built from source, and the source is pinned to one commit each. A branch tip
+# urunc has no release that carries what brig needs, so it is built from
+# source, and the source is pinned to one commit. A branch tip
 # moves with every push, so it is not a release input: two builds of one bundle
 # version would carry different code. Moving a pin is a reviewed one-line
 # change to a *_REF_DEFAULT below, plus its *_BRANCH_DEFAULT when the commit
@@ -127,11 +127,9 @@ URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
 URUNC_BRANCH_DEFAULT=feat/linux-hvi-v050
 URUNC_REF_DEFAULT=3c00b69ff9ac1b8bb260975cdc63d18a7043558b
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.8}"
-# urunit: the one binary of the initrd: early init, supervisor and exec agent.
-# urunc pins it in packaging/container-initrd/urunit.pin, read after the urunc
-# checkout below, so the initrd always matches the shim that talks to it.
-# URUNIT_REPO and URUNIT_REF override the pin. URUNIT_REF= builds a branch
-# tip, so it needs URUNIT_BRANCH too.
+# urunit, the one binary of the initrd, is not built here: the initrd comes from
+# hull-assets. pins.env records the urunit commit that urunc pins in
+# packaging/container-initrd/urunit.pin.
 # hvi: the monitor brig boots a generic container on. It is the
 # brig-sh/hvi-vmm release hull ships on macOS, static against musl. The tag,
 # its commit and the sha256 of each tarball describe one release, so a bump
@@ -145,36 +143,22 @@ HVI_SHA256_LINUX_ARM64=277c0cfbd9a669f79e9819b35b327a9d815128e181215fa46618acca0
 if [ -n "${URUNC_BRANCH:-}" ] && [ "$URUNC_BRANCH" != "$URUNC_BRANCH_DEFAULT" ] && [ -z "${URUNC_REF+set}" ]; then
     fatal "URUNC_BRANCH=$URUNC_BRANCH is set but URUNC_REF is not. Set URUNC_REF= to build that branch's tip, or URUNC_REF=<commit> to build one commit from it."
 fi
-if [ -n "${URUNIT_BRANCH:-}" ] && [ -z "${URUNIT_REF+set}" ]; then
-    fatal "URUNIT_BRANCH=$URUNIT_BRANCH is set but URUNIT_REF is not. Set URUNIT_REF= to build that branch's tip, or URUNIT_REF=<commit> to build one commit from it."
-fi
-if [ -n "${URUNIT_REF+set}" ] && [ -z "$URUNIT_REF" ] && [ -z "${URUNIT_BRANCH:-}" ]; then
-    fatal "URUNIT_REF= builds a branch tip, but URUNIT_BRANCH names no branch. Set URUNIT_BRANCH=<branch> too."
+if [ -n "${URUNIT_REF+set}" ] || [ -n "${URUNIT_BRANCH+set}" ] || [ -n "${URUNIT_REPO+set}" ]; then
+    fatal "urunit is no longer built here: URUNIT_REPO, URUNIT_REF and URUNIT_BRANCH do nothing. The initrd comes from hull-assets; move ASSETS_VERSION to a release built from the urunit you want."
 fi
 if [ -n "${HVI_REF+set}" ] || [ -n "${HVI_BRANCH+set}" ]; then
     fatal "hvi is no longer built from source: HVI_REF and HVI_BRANCH do nothing. Move HVI_VERSION and its pins to another release instead."
 fi
 URUNC_BRANCH="${URUNC_BRANCH:-$URUNC_BRANCH_DEFAULT}"
 URUNC_REF="${URUNC_REF-$URUNC_REF_DEFAULT}"
-# Empty when urunit comes from urunc's pin: urunit.pin names no branch.
-URUNIT_BRANCH="${URUNIT_BRANCH:-}"
-# Unset takes urunc's pin, after the urunc checkout. Set and empty builds the
-# tip of URUNIT_BRANCH.
-URUNIT_FROM_PIN=false
-if [ -z "${URUNIT_REF+set}" ]; then
-    URUNIT_FROM_PIN=true
-    URUNIT_REF=""
-fi
 # The checkout compares HEAD with the ref, so a ref is a full SHA: a short one,
 # a tag or a branch name would never match.
-for r in "URUNC_REF=$URUNC_REF" "URUNIT_REF=$URUNIT_REF"; do
-    v="${r#*=}"
-    [ -n "$v" ] || continue
-    case "$v" in
-        *[!0-9a-f]*) fatal "${r%%=*}='$v' is not a commit: pin a full 40-character SHA" ;;
+if [ -n "$URUNC_REF" ]; then
+    case "$URUNC_REF" in
+        *[!0-9a-f]*) fatal "URUNC_REF='$URUNC_REF' is not a commit: pin a full 40-character SHA" ;;
     esac
-    [ "${#v}" -eq 40 ] || fatal "${r%%=*}='$v' is not a commit: pin a full 40-character SHA"
-done
+    [ "${#URUNC_REF}" -eq 40 ] || fatal "URUNC_REF='$URUNC_REF' is not a commit: pin a full 40-character SHA"
+fi
 # The monitors and virtiofsd come from one monitors-build release. The release
 # is tagged vX.Y.Z and names its per-arch tarball after the monitor versions it
 # carries. monitors-build publishes no checksum file, so each tarball is pinned
@@ -259,7 +243,7 @@ GITHUB="https://github.com"
 NAME="brig-standalone-$VERSION-linux-$ARCH"
 [ "$ROOTLESS" = true ] && NAME="brig-standalone-$VERSION-rootless-linux-$ARCH"
 TMP_DIR="$(mktemp -d)"
-# The urunc/urunit/initrd builds run in docker as root and leave root-owned files
+# The urunc build runs in docker as root and leaves root-owned files
 # (vendored deps, dist/, apt caches) under TMP_DIR. A non-root builder -- a CI
 # runner -- cannot rm those, and a failing cleanup would fail the whole build
 # after the tarball was already produced. So reclaim them via docker if a plain
@@ -1018,61 +1002,32 @@ else
     info "  built urunc $URUNC_REF"
 fi
 
-# ---- urunit + the brig container-initrd (generic-boot / introspection) -------
-# brig builds its own initrd rather than shipping hull-assets': it execs into a
-# guest through the agent in urunit, which has to match the urunc shim's
-# protocol, so urunit is the commit the same urunc checkout ($src) pins.
-URUNIT_PINNED=""
-if [ "$VARIANT" = "stock" ]; then
-    # stock boots the unikernel's own init, so there is no urunit to build.
-    URUNIT_REF=""
-else
-    command -v docker >/dev/null 2>&1 || fatal "docker is required to build the brig initrd"
-    [ -d "${src:-}" ] || fatal "the urunc checkout is needed to build the initrd (build urunc from source)"
-    usrc="$TMP_DIR/urunit-src"
-    if [ "$URUNIT_FROM_PIN" = true ]; then
-        pin="$src/packaging/container-initrd/urunit.pin"
-        [ -f "$pin" ] || fatal "$URUNC_REPO@$URUNC_REF has no urunit.pin; set URUNIT_REPO and URUNIT_REF"
-        pin_repo="$(sed -n 's/^URUNIT_REPO=//p' "$pin" | head -1)"
-        pin_repo="${pin_repo#https://github.com/}"
-        URUNIT_REPO="${URUNIT_REPO:-${pin_repo%.git}}"
-        URUNIT_REF="$(sed -n 's/^URUNIT_REF=//p' "$pin" | head -1)"
-        case "$URUNIT_REF" in
-            *[!0-9a-f]*|"") fatal "urunit.pin names '$URUNIT_REF', not a commit" ;;
-        esac
-        [ "${#URUNIT_REF}" -eq 40 ] || fatal "urunit.pin names '$URUNIT_REF', not a full 40-character SHA"
-    fi
-    URUNIT_REPO="${URUNIT_REPO:-NOFireAI/urunit}"
-    # checkout_source puts the repo after https://github.com/.
+# ---- urunit: the commit urunc pins (generic-boot / introspection) -----------
+# The initrd comes from hull-assets below, and urunit is the whole of it. The
+# exec agent in urunit has to match the urunc shim's protocol. So the urunit
+# commit brig expects is the one the urunc checkout ($src) pins, and the guest
+# assets are checked against it.
+URUNIT_REPO=""
+URUNIT_REF=""
+if [ "$VARIANT" != "stock" ]; then
+    [ -d "${src:-}" ] || fatal "the urunc checkout is needed to read its urunit pin (build urunc from source)"
+    pin="$src/packaging/container-initrd/urunit.pin"
+    [ -f "$pin" ] || fatal "$URUNC_REPO@$URUNC_REF has no packaging/container-initrd/urunit.pin"
+    URUNIT_REPO="$(sed -n 's/^URUNIT_REPO=//p' "$pin" | head -1)"
+    URUNIT_REPO="${URUNIT_REPO#https://github.com/}"
+    URUNIT_REPO="${URUNIT_REPO%.git}"
+    # It goes into pins.env, which install.sh reads with awk -F=.
     case "$URUNIT_REPO" in
         */*/*|/*|*/|*[!A-Za-z0-9._/-]*) fatal "URUNIT_REPO='$URUNIT_REPO' is not <owner>/<repo> on GitHub" ;;
         */*) ;;
         *) fatal "URUNIT_REPO='$URUNIT_REPO' is not <owner>/<repo> on GitHub" ;;
     esac
-    URUNIT_PINNED=true
-    [ -n "$URUNIT_REF" ] || URUNIT_PINNED=false
-    ut_commit="$(checkout_source "$URUNIT_REPO" "$URUNIT_BRANCH" "$URUNIT_REF" "$usrc")"
-    pinned_note urunit "$URUNIT_REPO" "$URUNIT_BRANCH" "$URUNIT_REF" "$ut_commit"
-    URUNIT_REF="$ut_commit"
-    info "building urunit $URUNIT_REF (linux/$ARCH)"
-    docker run --rm --platform "linux/$ARCH" -v "$usrc":/u -w /u alpine:3.20 \
-        sh -c "apk add --no-cache build-base linux-headers make musl-dev >/dev/null && make static" \
-        || fatal "urunit build failed"
-    [ -s "$usrc/dist/urunit_static" ] || fatal "no urunit_static produced by the build"
-
-    # The single-binary layout: /urunit, with /init and /vz-init linked to it.
-    # URUNIT hands the script the binary built above, so it neither builds
-    # urunit itself nor needs a container tool inside this one.
-    info "building the brig container-initrd (urunit $URUNIT_REF)"
-    docker run --rm --platform "linux/$ARCH" \
-        -v "$src":/app -v "$usrc/dist/urunit_static":/urunit-static:ro \
-        -w /app -e HOME=/tmp -e URUNIT=/urunit-static -e TARGET_ARCH="$ARCH_UNAME" "$URUNC_GO_IMAGE" \
-        sh -c "apt-get update >/dev/null 2>&1 && apt-get install -y cpio >/dev/null 2>&1 && git config --global --add safe.directory /app && ./packaging/container-initrd/build-container-initrd.sh /app/dist/container-initrd" \
-        || fatal "container-initrd build failed"
-    [ -s "$src/dist/container-initrd" ] || fatal "no container-initrd produced"
-    cp "$src/dist/container-initrd" "$DL/container-initrd"
-    chmod 0644 "$DL/container-initrd"
-    info "  built container-initrd ($(stat -c%s "$DL/container-initrd") bytes)"
+    URUNIT_REF="$(sed -n 's/^URUNIT_REF=//p' "$pin" | head -1)"
+    case "$URUNIT_REF" in
+        *[!0-9a-f]*|"") fatal "urunit.pin names '$URUNIT_REF', not a commit" ;;
+    esac
+    [ "${#URUNIT_REF}" -eq 40 ] || fatal "urunit.pin names '$URUNIT_REF', not a full 40-character SHA"
+    info "urunit: urunc $URUNC_REF pins ${URUNIT_REPO:-urunit}@$URUNIT_REF"
 fi
 
 # ---- brig + brigd ------------------------------------------------------------
@@ -1240,13 +1195,11 @@ fi
 chmod 0755 "$STAGE"/bin/*
 
 # ---- guest boot assets (generic-boot / introspection) ------------------------
-# The kernel comes from hull-assets on both arches, pulled with the oras we just
-# bundled. The tag is resolved once, the cosign we just bundled checks the
-# signature on the digest it names, and that digest is what is pulled, so the
-# kernel is the one hull-assets signed. The initrd is not taken from there:
-# hull-assets' initrd carries hull's agent, so it is thrown away and the
-# brig-built one above takes its place. A fresh bundle.json records the urunc
-# the agent was built against, so the installer can check coherence.
+# The kernel and the initrd come from hull-assets on both arches, pulled with
+# the oras we just bundled. The tag is resolved once, the cosign we just bundled
+# checks the signature on the digest it names, and that digest is what is
+# pulled. So both files are the ones hull-assets signed, and so is the
+# bundle.json that says which urunc they were built from.
 ASSETS_URUNC_REF=""
 KERNEL_SOURCE=""
 KERNEL_FROM_ASSETS=false
@@ -1264,28 +1217,41 @@ if [ "$VARIANT" != "stock" ]; then
         "$a_ref@$a_digest" 2>&1 > /dev/null)" \
         || fatal "the signature on $ASSETS_REPO@$a_digest did not verify against $ASSETS_SIGNER:
     $(printf '%s\n' "$a_cosign" | tail -n 1)"
-    info "fetching the guest kernel $ASSETS_REPO:$a_tag ($a_digest, signature verified) with oras"
+    info "fetching the guest kernel and initrd $ASSETS_REPO:$a_tag ($a_digest, signature verified) with oras"
     ( cd "$STAGE/share/guest" && "$STAGE/bin/oras" pull "$a_ref@$a_digest" ) \
         || fatal "could not pull $ASSETS_REPO@$a_digest"
     KERNEL_SOURCE="$a_ref:$a_tag@$a_digest"
     KERNEL_FROM_ASSETS=true
-    [ -s "$STAGE/share/guest/$kernel" ] || fatal "no $kernel in the guest assets"
-
-    # Replace hull's initrd with the brig-built one.
-    [ -f "$DL/container-initrd" ] || fatal "the brig container-initrd was not built"
-    cp "$DL/container-initrd" "$STAGE/share/guest/container-initrd"
-    magic="$(od -An -tx1 -N2 "$STAGE/share/guest/container-initrd" | tr -d ' \n')"
+    g="$STAGE/share/guest"
+    [ -s "$g/$kernel" ] || fatal "no $kernel in the guest assets"
+    [ -s "$g/container-initrd" ] || fatal "no container-initrd in the guest assets"
+    magic="$(od -An -tx1 -N2 "$g/container-initrd" | tr -d ' \n')"
     [ "$magic" = "1f8b" ] && fatal "container-initrd is gzipped; it must stay uncompressed"
-    ASSETS_URUNC_REF="$URUNC_REF"
-    cat > "$STAGE/share/guest/bundle.json" <<JSON
-{"ref": "$URUNC_REF", "urunit": "$URUNIT_REF", "built_by": "brig-build-bundle"}
+
+    # The initrd's exec agent has to speak the protocol of the urunc built
+    # above, so assets built from another urunc are refused.
+    a_refs="$(sh "$SELF_DIR/check-assets.sh" "$g/bundle.json" "$URUNC_REF" "$URUNIT_REF")" \
+        || fatal "$ASSETS_REPO:$a_tag does not match urunc $URUNC_REF (see above)"
+    ASSETS_URUNC_REF="${a_refs%% *}"
+    a_urunit="${a_refs#* }"
+
+    # Replace hull-assets' bundle.json with one that says where each file came
+    # from. ref is the urunc the initrd matches. urunit is the commit the signed
+    # assets record. When they record none, urunit_expected is the commit urunc
+    # pins, which nothing here checked against the initrd.
+    if [ "$a_urunit" = "-" ]; then
+        urunit_json="\"urunit_expected\": \"$URUNIT_REF\""
+    else
+        urunit_json="\"urunit\": \"$a_urunit\""
+    fi
+    cat > "$g/bundle.json" <<JSON
+{"ref": "$URUNC_REF", $urunit_json, "built_by": "hull-assets", "packed_by": "brig-build-bundle", "kernel": {"file": "$kernel", "source": "$KERNEL_SOURCE"}, "initrd": {"file": "container-initrd", "source": "$KERNEL_SOURCE"}}
 JSON
     # The digests of the two files that boot. brig compares them with the
     # files before a boot. The same bytes go out as a release asset, which the
     # release's signed checksums.txt covers.
-    ( cd "$STAGE/share/guest" && sha256sum -- "$kernel" container-initrd ) \
-        > "$STAGE/share/guest/SHA256SUMS"
-    info "  kernel from $KERNEL_SOURCE, initrd built for brig (urunc $URUNC_REF)"
+    ( cd "$g" && sha256sum -- "$kernel" container-initrd ) > "$g/SHA256SUMS"
+    info "  kernel and initrd from $KERNEL_SOURCE (urunc $URUNC_REF)"
 fi
 
 # ---- config files, systemd units, wrappers -----------------------------------
@@ -1533,13 +1499,11 @@ URUNC_REPO=$URUNC_REPO
 URUNC_BRANCH=$URUNC_BRANCH
 URUNC_REF=$URUNC_REF
 URUNC_PINNED=$URUNC_PINNED
-URUNIT_REPO=$([ "$VARIANT" = "stock" ] && echo "" || echo "$URUNIT_REPO")
-URUNIT_BRANCH=$([ "$VARIANT" = "stock" ] && echo "" || echo "$URUNIT_BRANCH")
+URUNIT_REPO=$URUNIT_REPO
 URUNIT_REF=$URUNIT_REF
-URUNIT_PINNED=$URUNIT_PINNED
 HVI_VERSION=$([ "$HVI_INSTALLED" = true ] && echo "$HVI_VERSION" || echo "")
 HVI_COMMIT=$([ "$HVI_INSTALLED" = true ] && echo "$HVI_COMMIT" || echo "")
-INITRD_SOURCE=$([ "$VARIANT" = "stock" ] && echo "" || echo "built:$URUNC_REF")
+INITRD_SOURCE=$KERNEL_SOURCE
 PREFIX=$PREFIX
 DATA_DIR=$DATA_DIR
 RUN_DIR=$RUN_DIR
@@ -1565,15 +1529,12 @@ PINS
 if [ "$URUNC_PINNED" = false ]; then
     echo "# WARNING: urunc is the tip of $URUNC_BRANCH at build time, not a pinned commit." >> "$STAGE/pins.env"
 fi
-if [ "$URUNIT_PINNED" = false ]; then
-    echo "# WARNING: urunit is the tip of $URUNIT_BRANCH at build time, not a pinned commit." >> "$STAGE/pins.env"
-fi
 
 # Deterministic tar: sorted names, one fixed timestamp, root-owned, fixed
 # directory and file modes, no extended headers. Fetched components are
-# byte-identical per pin; the urunc binary and the initrd are byte-identical only
-# if their builds are reproducible (fixed commit, SOURCE_DATE_EPOCH, same
-# toolchain image), so a bundle's reproducibility rests on those builds too.
+# byte-identical per pin; the urunc binary is byte-identical only if its build
+# is reproducible (fixed commit, SOURCE_DATE_EPOCH, same toolchain image), so a
+# bundle's reproducibility rests on that build too.
 info "packing"
 find "$STAGE" -type d -exec chmod 0755 {} +
 find "$STAGE" -type f ! -perm -u+x -exec chmod 0644 {} +
