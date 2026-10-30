@@ -73,4 +73,6 @@ ok "the summary names the bundle and its version"
 # tree's bin directory, and a brig run from there has no launcher environment.
 grep -qF "export PATH=\"$T/home/.local/bin:\$PATH\"" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "the summary does not give the PATH line"; }
+grep -qF "Not $T/home/.local/share/brig/data/bin:" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "the summary does not warn off the tree's bin directory"; }
 ok "the summary gives the PATH line"
