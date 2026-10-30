@@ -1028,6 +1028,7 @@ main() {
             *":$LAUNCH_DIR:"*) ;;
             *) grp_note="  path:      $LAUNCH_DIR is not on your PATH. Add it to run brig by name:
                export PATH=\"$LAUNCH_DIR:\$PATH\"
+             Put that line in your shell's startup file to keep it.
              Not $BIN_DIR: the brig there runs without the launcher's environment.
 " ;;
         esac
