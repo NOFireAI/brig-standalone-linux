@@ -10,9 +10,9 @@
 # private-containerd stack (containerd, ctr, runc, nerdctl, CNI), the microVM
 # monitors, the urunc runtime, the guest kernel and a brig-built initrd, plus
 # every config file, systemd unit, wrapper and the uninstaller. Most components
-# are upstream release artifacts; three are built here because no release ships
-# them: urunc (from urunc-dev/urunc), urunit (from NOFireAI/urunit), hvi (from
-# brig-sh/hvi-vmm) and the container-initrd (assembled from urunc and urunit).
+# are upstream release artifacts, hvi among them. Three are built here because
+# no release ships them: urunc (from urunc-dev/urunc), urunit (from
+# NOFireAI/urunit) and the container-initrd (assembled from urunc and urunit).
 #
 #   scripts/build-bundle.sh --arch amd64 --version v0.1.0 --out dist
 #   scripts/build-bundle.sh --arch arm64 --version v0.1.0 --variant generic-boot
@@ -22,7 +22,7 @@
 # because a node install driven by root never uses any of it, and a user
 # install cannot work without it.
 #
-# docker is required (the urunc/urunit/hvi builds run in containers). Building
+# docker is required (the urunc and urunit builds run in containers). Building
 # the arm64 pieces on an amd64 runner (or vice versa) needs binfmt/qemu
 # registered, because the static urunc binary and urunit are CGO/C and are
 # built native inside a target-arch container (docker run --platform).
@@ -129,21 +129,16 @@ URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.8}"
 # urunit: the one binary of the initrd: early init, supervisor and exec agent.
 # urunc pins it in packaging/container-initrd/urunit.pin, read after the urunc
 # checkout below, so the initrd always matches the shim that talks to it.
-# URUNIT_REPO and URUNIT_REF override the pin.
-# pins.env records it as the branch, and is sourced, so it is one plain word.
-URUNIT_BRANCH_DEFAULT=urunc-urunit.pin
-# hvi: the monitor brig boots a generic container on. No release ships a Linux
-# binary, so it is built here, static against musl, with the toolchain its
-# rust-toolchain.toml pins. It needs no C toolchain on Linux. main as of
-# 24dc2c5: one --disk per disk with serial=, read-only disks, --fs per
-# export, a PL031 clock for arm64 guests, ACPI power-off on x86-64, and the
-# vsock fix that ends each direction of a connection on its own
-# (brig-sh/hvi-vmm#266), without which a guest's output after the host
-# half-closes its side could be lost.
-HVI_REPO="${HVI_REPO:-brig-sh/hvi-vmm}"
-HVI_BRANCH_DEFAULT=main
-HVI_REF_DEFAULT=24dc2c5f643ae23551ceb158600676c33636a21f
-HVI_RUST_IMAGE="${HVI_RUST_IMAGE:-rust:1.95.0}"
+# URUNIT_REPO and URUNIT_REF override the pin. URUNIT_REF= builds a branch
+# tip, so it needs URUNIT_BRANCH too.
+# hvi: the monitor brig boots a generic container on. It is the
+# brig-sh/hvi-vmm release hull ships on macOS, static against musl. The tag,
+# its commit and the sha256 of each tarball describe one release, so a bump
+# changes all four together. scripts/fetch-hvi.sh checks them.
+HVI_VERSION=0.1.0-rc.1
+HVI_COMMIT=65570c78e6830ec6166fd5f9079998a47535b09f
+HVI_SHA256_LINUX_AMD64=1fc870d4946c08a576fe775b631ed225dc5687611f73c118b14b19dd75469853
+HVI_SHA256_LINUX_ARM64=277c0cfbd9a669f79e9819b35b327a9d815128e181215fa46618acca05bf9acc
 # A branch given without a ref would otherwise build the pinned commit and
 # ignore the branch, so ask which one was meant.
 if [ -n "${URUNC_BRANCH:-}" ] && [ "$URUNC_BRANCH" != "$URUNC_BRANCH_DEFAULT" ] && [ -z "${URUNC_REF+set}" ]; then
@@ -152,12 +147,16 @@ fi
 if [ -n "${URUNIT_BRANCH:-}" ] && [ -z "${URUNIT_REF+set}" ]; then
     fatal "URUNIT_BRANCH=$URUNIT_BRANCH is set but URUNIT_REF is not. Set URUNIT_REF= to build that branch's tip, or URUNIT_REF=<commit> to build one commit from it."
 fi
-if [ -n "${HVI_BRANCH:-}" ] && [ "$HVI_BRANCH" != "$HVI_BRANCH_DEFAULT" ] && [ -z "${HVI_REF+set}" ]; then
-    fatal "HVI_BRANCH=$HVI_BRANCH is set but HVI_REF is not. Set HVI_REF= to build that branch's tip, or HVI_REF=<commit> to build one commit from it."
+if [ -n "${URUNIT_REF+set}" ] && [ -z "$URUNIT_REF" ] && [ -z "${URUNIT_BRANCH:-}" ]; then
+    fatal "URUNIT_REF= builds a branch tip, but URUNIT_BRANCH names no branch. Set URUNIT_BRANCH=<branch> too."
+fi
+if [ -n "${HVI_REF+set}" ] || [ -n "${HVI_BRANCH+set}" ]; then
+    fatal "hvi is no longer built from source: HVI_REF and HVI_BRANCH do nothing. Move HVI_VERSION and its pins to another release instead."
 fi
 URUNC_BRANCH="${URUNC_BRANCH:-$URUNC_BRANCH_DEFAULT}"
 URUNC_REF="${URUNC_REF-$URUNC_REF_DEFAULT}"
-URUNIT_BRANCH="${URUNIT_BRANCH:-$URUNIT_BRANCH_DEFAULT}"
+# Empty when urunit comes from urunc's pin: urunit.pin names no branch.
+URUNIT_BRANCH="${URUNIT_BRANCH:-}"
 # Unset takes urunc's pin, after the urunc checkout. Set and empty builds the
 # tip of URUNIT_BRANCH.
 URUNIT_FROM_PIN=false
@@ -165,11 +164,9 @@ if [ -z "${URUNIT_REF+set}" ]; then
     URUNIT_FROM_PIN=true
     URUNIT_REF=""
 fi
-HVI_BRANCH="${HVI_BRANCH:-$HVI_BRANCH_DEFAULT}"
-HVI_REF="${HVI_REF-$HVI_REF_DEFAULT}"
 # The checkout compares HEAD with the ref, so a ref is a full SHA: a short one,
 # a tag or a branch name would never match.
-for r in "URUNC_REF=$URUNC_REF" "URUNIT_REF=$URUNIT_REF" "HVI_REF=$HVI_REF"; do
+for r in "URUNC_REF=$URUNC_REF" "URUNIT_REF=$URUNIT_REF"; do
     v="${r#*=}"
     [ -n "$v" ] || continue
     case "$v" in
@@ -205,8 +202,14 @@ ORAS_VERSION="${ORAS_VERSION:-v1.3.4}"
 COSIGN_VERSION="${COSIGN_VERSION:-v3.1.3}"
 COSIGN_SHA_LINUX_AMD64="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
 COSIGN_SHA_LINUX_ARM64="c5d324e091826b0d7a78eb16fef316450b4eb9aaec045611c08ba06f5e73220a"
-# hvi is built from source; the rest come from the monitors release.
-MONITORS="${MONITORS:-hvi firecracker cloud-hypervisor solo5-hvt solo5-spt}"
+# hvi comes from its own release; the rest come from the monitors release.
+# stock leaves hvi out: it ships a released urunc, and no urunc release knows
+# hvi yet.
+if [ "$VARIANT" = "stock" ]; then
+    MONITORS="${MONITORS:-firecracker cloud-hypervisor solo5-hvt solo5-spt}"
+else
+    MONITORS="${MONITORS:-hvi firecracker cloud-hypervisor solo5-hvt solo5-spt}"
+fi
 ASSETS_REGISTRY="${ASSETS_REGISTRY:-ghcr.io}"
 ASSETS_REPO="${ASSETS_REPO:-nofireai/hull-assets}"
 ASSETS_VERSION="${ASSETS_VERSION:-0.1.10}"
@@ -970,7 +973,7 @@ checkout_source() {
 # and warn when it was a branch tip.
 pinned_note() {
     if [ -n "$4" ]; then
-        info "$1: checked out $2@$5 (pinned; from branch $3)"
+        info "$1: checked out $2@$5 (pinned${3:+; from branch $3})"
     else
         info "WARNING: $1: built $2@$5, the tip of $3 at build time. It is not pinned,"
         info "WARNING: and a rebuild of this bundle version may carry different code."
@@ -1014,31 +1017,6 @@ else
     info "  built urunc $URUNC_REF"
 fi
 
-# ---- hvi: built from source, static against musl -----------------------------
-HVI_PINNED=""
-case " $MONITORS " in
-    *" hvi "*)
-        command -v docker >/dev/null 2>&1 || fatal "docker is required to build hvi from $HVI_REPO"
-        command -v git >/dev/null 2>&1 || fatal "git is required to build hvi from source"
-        hsrc="$TMP_DIR/hvi-src"
-        HVI_PINNED=true
-        [ -n "$HVI_REF" ] || HVI_PINNED=false
-        h_commit="$(checkout_source "$HVI_REPO" "$HVI_BRANCH" "$HVI_REF" "$hsrc")"
-        pinned_note hvi "$HVI_REPO" "$HVI_BRANCH" "$HVI_REF" "$h_commit"
-        HVI_REF="$h_commit"
-        h_target="$ARCH_UNAME-unknown-linux-musl"
-        info "building hvi $HVI_REF ($HVI_RUST_IMAGE, $h_target)"
-        docker run --rm --platform "linux/$ARCH" -v "$hsrc":/hvi -w /hvi "$HVI_RUST_IMAGE" \
-            sh -c "rustup target add $h_target && cargo build --release --locked --target $h_target" \
-            || fatal "hvi build failed"
-        [ -s "$hsrc/target/$h_target/release/hvi" ] || fatal "no hvi produced by the build"
-        cp "$hsrc/target/$h_target/release/hvi" "$DL/hvi"
-        chmod 0755 "$DL/hvi"
-        info "  built hvi $HVI_REF"
-        ;;
-    *) HVI_REF="" ;;
-esac
-
 # ---- urunit + the brig container-initrd (generic-boot / introspection) -------
 # brig builds its own initrd rather than shipping hull-assets': it execs into a
 # guest through the agent in urunit, which has to match the urunc shim's
@@ -1054,16 +1032,22 @@ else
     if [ "$URUNIT_FROM_PIN" = true ]; then
         pin="$src/packaging/container-initrd/urunit.pin"
         [ -f "$pin" ] || fatal "$URUNC_REPO@$URUNC_REF has no urunit.pin; set URUNIT_REPO and URUNIT_REF"
-        pin_repo="$(sed -n 's/^URUNIT_REPO=//p' "$pin")"
+        pin_repo="$(sed -n 's/^URUNIT_REPO=//p' "$pin" | head -1)"
         pin_repo="${pin_repo#https://github.com/}"
         URUNIT_REPO="${URUNIT_REPO:-${pin_repo%.git}}"
-        URUNIT_REF="$(sed -n 's/^URUNIT_REF=//p' "$pin")"
+        URUNIT_REF="$(sed -n 's/^URUNIT_REF=//p' "$pin" | head -1)"
         case "$URUNIT_REF" in
             *[!0-9a-f]*|"") fatal "urunit.pin names '$URUNIT_REF', not a commit" ;;
         esac
         [ "${#URUNIT_REF}" -eq 40 ] || fatal "urunit.pin names '$URUNIT_REF', not a full 40-character SHA"
     fi
     URUNIT_REPO="${URUNIT_REPO:-NOFireAI/urunit}"
+    # checkout_source puts the repo after https://github.com/.
+    case "$URUNIT_REPO" in
+        */*/*|/*|*/|*[!A-Za-z0-9._/-]*) fatal "URUNIT_REPO='$URUNIT_REPO' is not <owner>/<repo> on GitHub" ;;
+        */*) ;;
+        *) fatal "URUNIT_REPO='$URUNIT_REPO' is not <owner>/<repo> on GitHub" ;;
+    esac
     URUNIT_PINNED=true
     [ -n "$URUNIT_REF" ] || URUNIT_PINNED=false
     ut_commit="$(checkout_source "$URUNIT_REPO" "$URUNIT_BRANCH" "$URUNIT_REF" "$usrc")"
@@ -1136,6 +1120,21 @@ c_actual="$(sha256sum "$DL/cosign" | awk '{print $1}')"
 [ "$cosign_sha" = "$c_actual" ] || fatal "cosign hash mismatch: expected $cosign_sha, got $c_actual"
 install -m 0755 "$DL/cosign" "$STAGE/bin/cosign"
 info "  cosign: verified against the pinned hash"
+
+# ---- hvi: its release, checked with the cosign above -------------------------
+HVI_INSTALLED=false
+case " $MONITORS " in
+    *" hvi "*)
+        case "$ARCH" in
+            amd64) hvi_sha="$HVI_SHA256_LINUX_AMD64" ;;
+            arm64) hvi_sha="$HVI_SHA256_LINUX_ARM64" ;;
+        esac
+        HVI_VERSION="$HVI_VERSION" HVI_COMMIT="$HVI_COMMIT" HVI_SHA256="$hvi_sha" \
+            COSIGN="$STAGE/bin/cosign" sh "$SELF_DIR/fetch-hvi.sh" "$ARCH" "$DL/hvi" \
+            || fatal "could not fetch a verified hvi $HVI_VERSION"
+        HVI_INSTALLED=true
+        ;;
+esac
 
 # ---- the private-stack components --------------------------------------------
 case "$ARCH" in
@@ -1526,10 +1525,8 @@ URUNIT_REPO=$([ "$VARIANT" = "stock" ] && echo "" || echo "$URUNIT_REPO")
 URUNIT_BRANCH=$([ "$VARIANT" = "stock" ] && echo "" || echo "$URUNIT_BRANCH")
 URUNIT_REF=$URUNIT_REF
 URUNIT_PINNED=$URUNIT_PINNED
-HVI_REPO=$([ -n "$HVI_REF" ] && echo "$HVI_REPO" || echo "")
-HVI_BRANCH=$([ -n "$HVI_REF" ] && echo "$HVI_BRANCH" || echo "")
-HVI_REF=$HVI_REF
-HVI_PINNED=$HVI_PINNED
+HVI_VERSION=$([ "$HVI_INSTALLED" = true ] && echo "$HVI_VERSION" || echo "")
+HVI_COMMIT=$([ "$HVI_INSTALLED" = true ] && echo "$HVI_COMMIT" || echo "")
 INITRD_SOURCE=$([ "$VARIANT" = "stock" ] && echo "" || echo "built:$URUNC_REF")
 PREFIX=$PREFIX
 DATA_DIR=$DATA_DIR
@@ -1557,9 +1554,6 @@ if [ "$URUNC_PINNED" = false ]; then
 fi
 if [ "$URUNIT_PINNED" = false ]; then
     echo "# WARNING: urunit is the tip of $URUNIT_BRANCH at build time, not a pinned commit." >> "$STAGE/pins.env"
-fi
-if [ "$HVI_PINNED" = false ]; then
-    echo "# WARNING: hvi is the tip of $HVI_BRANCH at build time, not a pinned commit." >> "$STAGE/pins.env"
 fi
 
 # Deterministic tar: sorted names, one fixed timestamp, root-owned, fixed

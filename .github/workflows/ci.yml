@@ -23,7 +23,7 @@ jobs:
         run: |
           set -eu
           sh -n install.sh
-          sh -n scripts/build-bundle.sh
+          sh -n scripts/build-bundle.sh scripts/fetch-hvi.sh
           # The wrappers and uninstaller are generated into the tarball by
           # build-bundle.sh, so lint the text it will write rather than waiting
           # to find out on a host.
@@ -53,7 +53,7 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck -s sh install.sh scripts/build-bundle.sh /tmp/brig-uninstall.sh \
+          shellcheck -s sh install.sh scripts/build-bundle.sh scripts/fetch-hvi.sh /tmp/brig-uninstall.sh \
             /tmp/brig-rootless-setup.sh /tmp/brig-ctl tests/*.sh
 
       - name: Script tests
@@ -143,15 +143,21 @@ jobs:
           esac
           grep -q "^ROOTLESS=$want$" "$p" \
             || { echo "pins.env does not say ROOTLESS=$want"; exit 1; }
-          # urunc, hvi and urunit are built from pinned commits, and the build
+          # urunc and urunit are built from pinned commits, and the build
           # fails if the checkout is anything else. This checks the record: the
           # commits in pins.env are the ones the script pins.
-          for c in URUNC HVI; do
-            want="$(sed -n "s/^${c}_REF_DEFAULT=\([0-9a-f]\{40\}\)$/\1/p" scripts/build-bundle.sh)"
-            [ -n "$want" ] || { echo "no ${c}_REF_DEFAULT in build-bundle.sh"; exit 1; }
-            grep -E "^${c}_(REF|PINNED)=" "$p"
-            grep -qx "${c}_REF=$want" "$p" || { echo "pins.env does not carry ${c}_REF=$want"; exit 1; }
-            grep -qx "${c}_PINNED=true" "$p" || { echo "pins.env does not say ${c}_PINNED=true"; exit 1; }
+          want="$(sed -n 's/^URUNC_REF_DEFAULT=\([0-9a-f]\{40\}\)$/\1/p' scripts/build-bundle.sh)"
+          [ -n "$want" ] || { echo "no URUNC_REF_DEFAULT in build-bundle.sh"; exit 1; }
+          grep -E "^URUNC_(REF|PINNED)=" "$p"
+          grep -qx "URUNC_REF=$want" "$p" || { echo "pins.env does not carry URUNC_REF=$want"; exit 1; }
+          grep -qx "URUNC_PINNED=true" "$p" || { echo "pins.env does not say URUNC_PINNED=true"; exit 1; }
+          # hvi is fetched from the release the script pins; fetch-hvi.sh
+          # fails the build unless its signature and sums check out.
+          grep -E "^HVI_(VERSION|COMMIT)=" "$p"
+          for k in HVI_VERSION HVI_COMMIT; do
+            want="$(sed -n "s/^$k=\([0-9a-z.-]*\)$/\1/p" scripts/build-bundle.sh)"
+            [ -n "$want" ] || { echo "no $k in build-bundle.sh"; exit 1; }
+            grep -qx "$k=$want" "$p" || { echo "pins.env does not carry $k=$want"; exit 1; }
           done
           # urunit has no pin of its own here: the build reads it from the
           # pinned urunc commit's packaging/container-initrd/urunit.pin. Read

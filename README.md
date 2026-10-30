@@ -107,8 +107,9 @@ $ sha256sum -c checksums.txt --ignore-missing
 /var/lib/brig/
   data/                    immutable, unpacked from the tarball:
     bin/            brig, brigd, urunc, containerd-shim-urunc-v2, containerd, ctr,
-                    runc, nerdctl, cosign, oras, firecracker, cloud-hypervisor,
-                    solo5-hvt, solo5-spt, brig-ctl, brig-pool-up, brig-uninstall.sh
+                    runc, nerdctl, cosign, oras, hvi, firecracker,
+                    cloud-hypervisor, solo5-hvt, solo5-spt, brig-ctl,
+                    brig-pool-up, brig-uninstall.sh
     libexec/        virtiofsd
     libexec/cni/    CNI plugins
     etc/            urunc.toml, containerd.toml, nerdctl.toml, brig-env.sh,
@@ -275,14 +276,14 @@ the install does not. Running `build-bundle.sh` by hand to cross-build the other
 architecture needs qemu/binfmt instead of a native runner.
 
 `build-bundle.sh` fetches the components that have upstream releases and builds
-the four that do not:
+the three that do not:
 
 | Component | Source | In the tarball |
 | --- | --- | --- |
 | brig, brigd | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
 | urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `3c00b69` (branch `feat/linux-hvi-v050`) | CGO-static, built in a Go container |
-| urunit | built from `NOFireAI/urunit` at the commit urunc's `packaging/container-initrd/urunit.pin` names (`de324cf`, branch `stack/9-nul-without-magic`) | C-static; the whole initrd |
-| hvi | built from `brig-sh/hvi-vmm` at commit `24dc2c5` (branch `main`) | musl-static, built in a Rust container |
+| urunit | built from `NOFireAI/urunit` at the commit urunc's `packaging/container-initrd/urunit.pin` names (`48a61bd`, branch `stack/10-acpi-power-button`) | C-static; the whole initrd |
+| hvi | `brig-sh/hvi-vmm` release `v0.1.0-rc.1` (commit `65570c7`), the one hull ships on macOS | fetched, musl-static; its `SHA256SUMS` cosign-verified against hvi-vmm's release workflow, the tarball pinned by sha256 |
 | container-initrd | built from the above | assembled for brig, not fetched |
 | guest kernel | `ghcr.io/nofireai/hull-assets` | fetched by digest once its cosign signature checks out; the kernel hull and brig boot |
 | monitors, virtiofsd | `urunc-dev/monitors-build` | fetched, pinned by sha256 |
