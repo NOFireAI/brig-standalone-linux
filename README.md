@@ -389,7 +389,10 @@ Six things, all recorded in `.install-stamp` and all undone by the uninstaller.
 4. The two systemd units, if you let the installer add them.
 5. The device-mapper pool `brig-devpool` and its loop devices, which are
    kernel-global objects.
-6. The `brig0` CNI bridge.
+6. The `brig0` CNI bridge, and the two rules the CNI firewall plugin adds for
+   it to the `CNI-ISOLATION-STAGE-1` and `-2` chains. Those chains are shared
+   with other CNI networks, so the uninstaller removes only the rules that
+   name `brig0`.
 
 Nothing else. The host's `/etc/containerd/config.toml` is not read or written,
 and the host containerd is never restarted.

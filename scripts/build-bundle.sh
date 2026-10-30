@@ -861,11 +861,43 @@ for l in "${BRIG_LAUNCHER:-}" "${BRIGD_LAUNCHER:-}"; do
     fi
 done
 
-if [ "${INSTALL_MODE:-system}" != "user" ] \
-    && [ -n "${BRIDGE_NAME:-}" ] && ip link show "$BRIDGE_NAME" >/dev/null 2>&1; then
-    ip link set "$BRIDGE_NAME" down 2>/dev/null || true
-    ip link delete "$BRIDGE_NAME" 2>/dev/null || true
-    info "removed the CNI bridge $BRIDGE_NAME"
+# drop_bridge_rules <bridge>: delete the rules naming <bridge> with -i or -o
+# from the CNI-* chains (filter and nat, IPv4 and IPv6). The CNI firewall
+# plugin adds two such rules per bridge and never removes them. The chains are
+# shared with other CNI networks, so they stay, and so do other bridges' rules.
+# Each rule goes to iptables-restore as iptables-save printed it, so the shell
+# never parses its quoted comment. A failed delete only warns, with iptables'
+# own reason. The xtables lock is waited on for 5 seconds at most, so a lock
+# another process holds cannot hang the uninstall.
+drop_bridge_rules() {
+    for ipt in iptables ip6tables; do
+        command -v "$ipt-save" >/dev/null 2>&1 || continue
+        command -v "$ipt-restore" >/dev/null 2>&1 || continue
+        for table in filter nat; do
+            "$ipt-save" -t "$table" 2>/dev/null | awk -v br="$1" '
+                $1 == "-A" && $2 ~ /^CNI-/ {
+                    for (i = 3; i < NF; i++)
+                        if (($i == "-i" || $i == "-o") && $(i + 1) == br) { print; next }
+                }' | while IFS= read -r rule; do
+                if err="$(printf '*%s\n-D %s\nCOMMIT\n' "$table" "${rule#-A }" \
+                    | "$ipt-restore" -w 5 --noflush 2>&1)"; then
+                    info "removed $ipt -t $table ${rule#-A }"
+                else
+                    warn "could not remove $ipt -t $table ${rule#-A }: $err"
+                fi
+            done
+        done
+    done
+}
+
+if [ "${INSTALL_MODE:-system}" != "user" ] && [ -n "${BRIDGE_NAME:-}" ]; then
+    if ip link show "$BRIDGE_NAME" >/dev/null 2>&1; then
+        ip link set "$BRIDGE_NAME" down 2>/dev/null || true
+        ip link delete "$BRIDGE_NAME" 2>/dev/null || true
+        info "removed the CNI bridge $BRIDGE_NAME"
+    fi
+    # The rules outlive the bridge, so they go whether or not it is still up.
+    drop_bridge_rules "$BRIDGE_NAME"
 fi
 
 if [ "${GROUP_CREATED:-false}" = "true" ] && [ -n "${BRIG_GROUP:-}" ]; then
