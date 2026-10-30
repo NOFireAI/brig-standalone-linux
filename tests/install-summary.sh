@@ -68,3 +68,9 @@ if grep -q "brig v9.9.9" "$T/out.log"; then
     fail "the summary gives brig the bundle's version"
 fi
 ok "the summary names the bundle and its version"
+
+# The line to type, since the only other full paths on screen are under the
+# tree's bin directory, and a brig run from there has no launcher environment.
+grep -qF "export PATH=\"$T/home/.local/bin:\$PATH\"" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "the summary does not give the PATH line"; }
+ok "the summary gives the PATH line"
