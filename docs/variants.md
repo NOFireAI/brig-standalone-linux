@@ -144,9 +144,8 @@ reaps it per container. `build-bundle.sh` would install it as `bin/sidecar`;
 where its build comes from is unsettled.
 
 **hvi is a fifth monitor from a different repo.** The matrix scores hvi beside
-firecracker, but hvi is built in `brig-sh/hvi-vmm`, not in the monitors release
-the build draws from. Adding it means either a second source in `build-bundle.sh`
-or getting hvi into `monitors-build`.
+firecracker, but hvi is released by `brig-sh/hvi-vmm`, not by the monitors
+release the build draws from. `build-bundle.sh` fetches it as a second source.
 
 ## Running the matrix
 
@@ -172,9 +171,9 @@ refuses a stock binary, rather than printing a table of zeroes.
    `packaging/container-initrd`, so its agent matches the shim. Both are
    commits because a branch tip moves with every push; the README's build
    section says how to move one.
-4. Settled for now: `build-bundle.sh` builds hvi from `brig-sh/hvi-vmm` at a
-   pinned commit (`24dc2c5`, on `main`), static against musl in a Rust
-   container, since hvi-vmm publishes no release binary. Moving it into
-   `monitors-build` stays open, and would turn the build step into a fetch.
+4. Settled: `build-bundle.sh` fetches hvi from the `brig-sh/hvi-vmm` release
+   hull ships on macOS (`v0.1.0-rc.1`). `scripts/fetch-hvi.sh` checks the
+   cosign signature on its `SHA256SUMS`, the pinned sha256 of the tarball and
+   the commit its manifest names.
 5. Is `introspection` a variant at all, or `generic-boot` plus an opt-in flag?
    Everything it adds is additive, which argues for the flag.

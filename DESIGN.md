@@ -32,14 +32,13 @@ now done and is what `install.sh` and `scripts/build-bundle.sh` produce.
   the host. The installer builds nothing, runs no compiler and no docker, and
   fetches nothing else. Because the config files carry the fixed layout, the paths
   above are not configurable at install time.
-- **Why four things are built (at release).** Most components are upstream release
-  artifacts. Four have no upstream release and are compiled in the build: urunc
+- **Why three things are built (at release).** Most components are upstream release
+  artifacts, hvi among them (`brig-sh/hvi-vmm` `v0.1.0-rc.1`, cosign-verified).
+  Three have no upstream release and are compiled in the build: urunc
   (from `urunc-dev/urunc` at commit `3c00b69`, on
   `feat/linux-hvi-v050`, CGO static, so native per arch under
   qemu/binfmt), urunit (from `NOFireAI/urunit` at the commit urunc's
-  `urunit.pin` names, C static), hvi (from `brig-sh/hvi-vmm` at commit
-  `24dc2c5` on `main`, Rust, static against musl, no C toolchain needed),
-  and the brig `container-initrd`. The sources are
+  `urunit.pin` names, C static) and the brig `container-initrd`. The sources are
   pinned to a commit, not to a branch: a branch tip moves with every push, so it
   is not a release input. The README's build section says how to move a pin.
   brig execs into a guest through the agent in urunit, whose protocol must match
