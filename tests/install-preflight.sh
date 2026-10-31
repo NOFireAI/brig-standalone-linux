@@ -30,6 +30,11 @@ mkdir -p "$T/stub" "$T/home" "$T/run"
 cat > "$T/stub/sudo" <<STUB
 #!/bin/sh
 echo "\$*" >> "$T/sudo.log"
+# -v is the password prompt, which the test answers right or not at all.
+if [ "\$1" = -v ]; then
+    [ -f "$T/sudo-pass" ] || exit 1
+    touch "$T/sudo-ok"; exit 0
+fi
 [ -f "$T/sudo-ok" ] || exit 1
 [ "\$*" = "-n true" ] && exit 0
 if [ "\$1 \$2 \$3" = "-n sh -eu" ]; then
@@ -41,6 +46,16 @@ if [ "\$1 \$2 \$3" = "-n sh -eu" ]; then
     exit 0
 fi
 exit 1
+STUB
+
+# id -nG names a sudo group only when the test says this user is in one.
+cat > "$T/stub/id" <<STUB
+#!/bin/sh
+if [ "\$1" = -nG ]; then
+    if [ -f "$T/in-sudo" ]; then echo "$user sudo"; else echo "$user"; fi
+    exit 0
+fi
+exec /usr/bin/id "\$@"
 STUB
 
 # getfacl and sysctl answer from files the test sets.
@@ -77,7 +92,7 @@ run_install() {
     set +e
     env -u XDG_CONFIG_HOME -u XDG_DATA_HOME \
         HOME="$T/home" XDG_RUNTIME_DIR="$T/run" PATH="$T/stub:$PATH" \
-        INSTALL_BRIG_BUNDLE="$T/no-such-bundle.tar.gz" \
+        INSTALL_BRIG_BUNDLE="$T/no-such-bundle.tar.gz" INSTALL_BRIG_TTY="$T/tty" \
         sh "$here/install.sh" > "$T/out.log" 2>&1
     rc=$?
     set -e
@@ -157,6 +172,30 @@ else
     fi
     ok "a failed package install stops the install"
     rm -f "$T/apt-fails" "$T/sudo-ok"
+
+    # sudo with a password, from a terminal, for a user in a sudo group: asked
+    # once, and then the same as sudo without one.
+    rm -f "$T/stub/newuidmap" "$T/stub/setfacl" "$T/sudo-ran.sh"
+    : > "$T/tty"
+    touch "$T/in-sudo" "$T/sudo-pass"
+    run_install
+    [ "$(grep -c '^-v$' "$T/sudo.log")" = 1 ] || { cat "$T/sudo.log" >&2; fail "sudo was not asked for the password once"; }
+    grep -q "apt-get install -y uidmap acl" "$T/sudo-ran.sh" 2>/dev/null \
+        || { cat "$T/out.log" >&2; fail "the packages were not installed after the password"; }
+    grep -q "no-such-bundle" "$T/out.log" || { cat "$T/out.log" >&2; fail "the install did not go on after the password"; }
+    ok "a user in a sudo group is asked for the password and the install goes on"
+
+    # No terminal, or not in a sudo group: no prompt, and the stop as before.
+    rm -f "$T/stub/newuidmap" "$T/stub/setfacl" "$T/sudo-ok" "$T/tty"
+    run_install
+    if grep -q '^-v$' "$T/sudo.log"; then fail "sudo was asked for a password with no terminal"; fi
+    grep -q "Nothing was downloaded" "$T/out.log" || { cat "$T/out.log" >&2; fail "no stop without a terminal"; }
+    : > "$T/tty"
+    rm -f "$T/in-sudo"
+    run_install
+    if grep -q '^-v$' "$T/sudo.log"; then fail "a user in no sudo group was asked for a password"; fi
+    ok "no terminal, or no sudo group, means no password prompt"
+    rm -f "$T/sudo-pass" "$T/tty"
     for b in newuidmap setfacl; do
         printf '#!/bin/sh\nexit 0\n' > "$T/stub/$b"; chmod 0755 "$T/stub/$b"
     done
