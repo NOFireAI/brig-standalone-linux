@@ -95,7 +95,7 @@ done
 # The brig release this bundle carries. On Linux it is the brig a user gets,
 # so it is pinned like every other component. Bump it with the brig release a
 # bundle is cut for. BRIG_VERSION=latest still works for a local build.
-BRIG_VERSION="${BRIG_VERSION:-v0.4.1}"
+BRIG_VERSION="${BRIG_VERSION:-v0.5.0}"
 BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
 # urunc has no release that carries what brig needs, so it is built from
 # source, and the source is pinned to one commit. A branch tip
