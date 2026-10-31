@@ -540,8 +540,8 @@ done
 # lists the module will do, so a re-run, or a host an admin prepared with a
 # file of their own, needs no sudo here.
 MODULES_FILE=/etc/modules-load.d/brig.conf
-MODULES_WANT="# brig: the vsock device the monitor gives the guest. Written by
-# brig-rootless-setup.sh; the matching udev rule grants access to it.
+MODULES_WANT="# brig: the vsock device the monitor gives the guest. Written by brig's
+# rootless setup; the matching udev rule grants access to it.
 vhost_vsock"
 if [ -d /sys/module/vhost_vsock ] &&
    ! grep -qsx 'vhost_vsock' /etc/modules-load.d/*.conf /etc/modules; then
