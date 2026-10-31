@@ -87,12 +87,13 @@ for b in newuidmap setfacl iptables systemctl; do
 done
 chmod 0755 "$T/stub"/*
 
+# run_install [VAR=value ...] runs install.sh with these set as well.
 run_install() {
     : > "$T/sudo.log"
     set +e
     env -u XDG_CONFIG_HOME -u XDG_DATA_HOME \
         HOME="$T/home" XDG_RUNTIME_DIR="$T/run" PATH="$T/stub:$PATH" \
-        INSTALL_BRIG_BUNDLE="$T/no-such-bundle.tar.gz" INSTALL_BRIG_TTY="$T/tty" \
+        INSTALL_BRIG_BUNDLE="$T/no-such-bundle.tar.gz" INSTALL_BRIG_TTY="$T/tty" "$@" \
         sh "$here/install.sh" > "$T/out.log" 2>&1
     rc=$?
     set -e
@@ -110,7 +111,11 @@ if grep -q "no-such-bundle" "$T/out.log"; then
     fail "the install went on to fetch the bundle"
 fi
 [ ! -e "$T/home/.local/share/brig" ] || fail "the install wrote $T/home/.local/share/brig"
-grep -q "Nothing was downloaded" "$T/out.log" || { cat "$T/out.log" >&2; fail "no reason given"; }
+grep -q "stopped before it downloaded the bundle" "$T/out.log" || { cat "$T/out.log" >&2; fail "no reason given"; }
+grep -qF "See https://github.com/NOFireAI/brig-standalone-linux/blob/main/docs/rootless.md" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "the guide is not named by URL"; }
+! grep -q "command to run again" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "a command to run again was printed without INSTALL_BRIG_RERUN"; }
 awk '/^sudo sh -eu <<.BRIG_ROOT.$/ {f=1; next} /^BRIG_ROOT$/ {f=0} f' "$T/out.log" > "$T/root.sh"
 [ -s "$T/root.sh" ] || { cat "$T/out.log" >&2; fail "no root commands printed"; }
 sh -n "$T/root.sh" || fail "the root commands are not valid sh"
@@ -126,6 +131,15 @@ if [ -e /dev/kvm ]; then
     grep -q "u:$user:rw /dev/kvm" "$T/root.sh" || fail "the udev rule does not grant $user"
 fi
 ok "without sudo the install stops before the download and prints the root commands"
+
+# 1b. A caller that names how to run it again gets that command printed after
+#     the root commands.
+run_install INSTALL_BRIG_RERUN="curl -fsSL https://brig.sh/install | sh"
+[ "$rc" -ne 0 ] || fail "the install succeeded on a host that is not prepared"
+awk '/^BRIG_ROOT$/ {f=1; next} f' "$T/out.log" \
+    | grep -qxF "    curl -fsSL https://brig.sh/install | sh" \
+    || { cat "$T/out.log" >&2; fail "INSTALL_BRIG_RERUN was not printed after the root commands"; }
+ok "the caller's command to run again is printed"
 
 # 2. Not prepared, and sudo runs without a password: go on, and leave the
 #    host settings to the rootless setup.
@@ -189,7 +203,7 @@ else
     rm -f "$T/stub/newuidmap" "$T/stub/setfacl" "$T/sudo-ok" "$T/tty"
     run_install
     if grep -q '^-v$' "$T/sudo.log"; then fail "sudo was asked for a password with no terminal"; fi
-    grep -q "Nothing was downloaded" "$T/out.log" || { cat "$T/out.log" >&2; fail "no stop without a terminal"; }
+    grep -q "stopped before it downloaded the bundle" "$T/out.log" || { cat "$T/out.log" >&2; fail "no stop without a terminal"; }
     : > "$T/tty"
     rm -f "$T/in-sudo"
     run_install
