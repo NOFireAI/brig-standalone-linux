@@ -172,7 +172,9 @@ The host prerequisites above still apply, and `install.sh --user` checks them
 before it downloads anything. When sudo runs without a password, as on a cloud
 image, the installer makes them itself: it installs `uidmap` and `acl` and adds
 a subuid range before the download, and the rootless setup makes the rest at
-the end. When sudo needs a password, the installer stops there. It prints the
+the end. When sudo needs a password, a user in the `sudo`, `admin` or `wheel` group is
+asked for it once on the terminal, and the install goes on the same way. Any
+other user, or a run with no terminal, stops there. The installer prints the
 commands that prepare the host for this user and this prefix, as one block for
 root:
 

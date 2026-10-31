@@ -178,6 +178,8 @@ setup_env() {
     case "${INSTALL_BRIG_VERBOSE:-false}" in true|1) VERBOSE=true ;; esac
     # A user install is the rootless path, so it implies the rootless bundle.
     WANT_ROOTLESS="${INSTALL_BRIG_ROOTLESS:-false}"
+    # Where sudo can ask for a password. A test points it at a file.
+    TTY="${INSTALL_BRIG_TTY:-/dev/tty}"
     [ "$INSTALL_MODE" = "user" ] && WANT_ROOTLESS=true
 
     SKIP_START="${INSTALL_BRIG_SKIP_START:-false}"
@@ -277,6 +279,25 @@ verify_system() {
 # Whatever needs root is printed as one block of commands for this user and
 # this prefix. An admin runs it once, and the next install needs no sudo. The
 # checks and the commands mirror brig-rootless-setup.sh; keep them in step.
+# Whether sudo runs without a password now. Under `curl ... | sh`, stdin is the
+# script, so a user whose sudo needs a password is asked for it here, once, on
+# the terminal: a user in a sudo group, and only when there is a terminal.
+sudo_ready() {
+    sudo -n true 2>/dev/null && return 0
+    [ -z "${SUDO_ASKED:-}" ] || return 1
+    SUDO_ASKED=true
+    case " $(id -nG 2>/dev/null) " in
+        *" sudo "* | *" admin "* | *" wheel "*) ;;
+        *) return 1 ;;
+    esac
+    ( : < "$TTY" ) 2>/dev/null || return 1
+    warn "this host needs root's setup, so sudo asks for your password once"
+    # The terminal is where the password comes from, not a file sudo reads.
+    # shellcheck disable=SC2024
+    sudo -v < "$TTY" || return 1
+    sudo -n true 2>/dev/null
+}
+
 verify_rootless_prereqs() {
     me="$(id -un)"
     miss=""
@@ -408,7 +429,7 @@ FIX
         return 0
     fi
     if [ -z "$miss" ] && [ "$setup_can" = false ] && [ -z "${OWN_MADE:-}" ] \
-        && sudo -n true 2>/dev/null; then
+        && sudo_ready; then
         OWN_MADE=true
         warn "making what brig-rootless-setup.sh does not, with sudo:"
         sed 's/^/    /' "$own" >&2
@@ -419,7 +440,7 @@ FIX
             return 0
         fi
     fi
-    if [ -z "$miss" ] && [ "$setup_can" = true ] && sudo -n true 2>/dev/null; then
+    if [ -z "$miss" ] && [ "$setup_can" = true ] && sudo_ready; then
         # Counted, not assumed: this said "two" whatever it had found, which
         # reads as a second thing the reader has missed.
         n=$(printf '%b' "$need" | grep -c '^  ')
