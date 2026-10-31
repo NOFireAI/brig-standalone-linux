@@ -239,7 +239,10 @@ verify_system() {
         command -v "$tool" >/dev/null 2>&1 || fatal "'$tool' is required and was not found"
     done
 
-    command -v iptables >/dev/null 2>&1 || warn "iptables not found, urunc cannot set up NAT for guests"
+    # A user install makes it with the other packages: see verify_rootless_prereqs.
+    if [ "$INSTALL_MODE" != "user" ]; then
+        have_iptables || warn "iptables not found, so a sandbox network cannot start: the CNI firewall plugin runs it"
+    fi
 
     # Probe for devmapper thin-pool support so the pool can be provisioned (and
     # devmapper made switchable at runtime). Missing tools or a kernel without
@@ -279,6 +282,44 @@ verify_system() {
 # Whatever needs root is printed as one block of commands for this user and
 # this prefix. An admin runs it once, and the next install needs no sudo. The
 # checks and the commands mirror brig-rootless-setup.sh; keep them in step.
+# Debian keeps it in /usr/sbin, which a user's PATH does not have, and the CNI
+# plugins find it there all the same.
+have_iptables() {
+    command -v iptables >/dev/null 2>&1 || [ -x /usr/sbin/iptables ] || [ -x /sbin/iptables ]
+}
+
+# install_tools_cmd <tool>...: the root command that installs the tools, with the
+# package manager this host has and the names it gives them. newuidmap is in
+# uidmap on Debian and Ubuntu and in shadow elsewhere; setfacl is in acl
+# everywhere; iptables is iptables-nft on the RHEL family and iptables elsewhere. A host with none of these gets a comment, which installs nothing,
+# so the check that follows still stops on the missing tool.
+install_tools_cmd() {
+    names=""
+    for tool in "$@"; do
+        case "$tool" in
+            newuidmap) if command -v apt-get >/dev/null 2>&1; then names="$names uidmap"
+                       elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then names="$names shadow-utils"
+                       else names="$names shadow"; fi ;;
+            setfacl) names="$names acl" ;;
+            iptables) if command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then names="$names iptables-nft"
+                      else names="$names iptables"; fi ;;
+        esac
+    done
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "DEBIAN_FRONTEND=noninteractive apt-get install -y$names </dev/null"
+    elif command -v dnf >/dev/null 2>&1; then
+        echo "dnf install -y$names"
+    elif command -v yum >/dev/null 2>&1; then
+        echo "yum install -y$names"
+    elif command -v zypper >/dev/null 2>&1; then
+        echo "zypper --non-interactive install$names"
+    elif command -v pacman >/dev/null 2>&1; then
+        echo "pacman -S --noconfirm --needed$names"
+    else
+        echo "# install$names with this host's package manager: none that this installer knows is here"
+    fi
+}
+
 # Whether sudo runs without a password now. Under `curl ... | sh`, stdin is the
 # script, so a user whose sudo needs a password is asked for it here, once, on
 # the terminal: a user in a sudo group, and only when there is a terminal.
@@ -316,12 +357,17 @@ verify_rootless_prereqs() {
 
     pkgs=""
     command -v newuidmap >/dev/null 2>&1 \
-        || { need="$need\n  newuidmap is missing"; pkgs="$pkgs uidmap"; }
+        || { need="$need\n  newuidmap is missing"; pkgs="$pkgs newuidmap"; }
     command -v setfacl >/dev/null 2>&1 \
-        || { need="$need\n  setfacl is missing"; pkgs="$pkgs acl"; }
+        || { need="$need\n  setfacl is missing"; pkgs="$pkgs setfacl"; }
+    # The CNI firewall plugin of every sandbox network runs it. openSUSE Leap 16
+    # ships nftables alone, and there every run failed in the network setup.
+    have_iptables \
+        || { need="$need\n  iptables is missing"; pkgs="$pkgs iptables"; }
     if [ -n "$pkgs" ]; then
         setup_can=false
-        echo "DEBIAN_FRONTEND=noninteractive apt-get install -y$pkgs </dev/null" | tee -a "$own" >> "$fix"
+        # shellcheck disable=SC2086
+        install_tools_cmd $pkgs | tee -a "$own" >> "$fix"
     fi
 
     # A range that overlaps another user's maps both users' containers onto the
