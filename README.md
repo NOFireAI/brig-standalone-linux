@@ -283,7 +283,7 @@ urunc, which has none:
 | --- | --- | --- |
 | brig, brigd, brig-broker | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
 | urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `3c00b69` (branch `feat/linux-hvi-v050`) | CGO-static, built in a Go container |
-| hvi | `brig-sh/hvi-vmm` release `v0.1.0-rc.1` (commit `65570c7`), the one hull ships on macOS | fetched, musl-static; its `SHA256SUMS` cosign-verified against hvi-vmm's release workflow, the tarball pinned by sha256 |
+| hvi | `brig-sh/hvi-vmm` release `v0.1.0-rc.2` (commit `2ed8f61`), the one hull ships on macOS | fetched, musl-static; its `SHA256SUMS` cosign-verified against hvi-vmm's release workflow, the tarball pinned by sha256 |
 | guest kernel, container-initrd | `ghcr.io/nofireai/hull-assets` `0.1.11` | fetched by digest once its cosign signature checks out; the initrd is urunit. urunc's `packaging/container-initrd/urunit.pin` names `48a61bd`; hull-assets `0.1.11` does not record its urunit, so the bundle records that commit as `urunit_expected`. The build refuses a hull-assets bundle built from another urunc |
 | monitors, virtiofsd | `urunc-dev/monitors-build` | fetched, pinned by sha256 |
 | containerd, runc, nerdctl, CNI | upstream releases | fetched, upstream checksums |
