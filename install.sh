@@ -1024,10 +1024,16 @@ main() {
     start_note="  started:   $SERVICE_NAME.service"
     if [ "$INSTALL_MODE" = "user" ]; then
         start_note="  started:   brig-containerd.service (systemd --user)"
+        # The line is for a startup file, so it says $HOME as written there. That
+        # also keeps a home path with a quote or a $ in it from breaking the line.
+        line_dir="$LAUNCH_DIR"
+        case "$LAUNCH_DIR" in
+            "$HOME"/*) line_dir="\$HOME${LAUNCH_DIR#"$HOME"}" ;;
+        esac
         case ":$PATH:" in
-            *":$LAUNCH_DIR:"*) ;;
+            *":$LAUNCH_DIR:"* | *":$LAUNCH_DIR/:"*) ;;
             *) grp_note="  path:      $LAUNCH_DIR is not on your PATH. Add it to run brig by name:
-               export PATH=\"$LAUNCH_DIR:\$PATH\"
+               export PATH=\"$line_dir:\$PATH\"
              Put that line in your shell's startup file to keep it.
              Do not add $BIN_DIR: the brig there runs without the launcher's environment.
 " ;;
