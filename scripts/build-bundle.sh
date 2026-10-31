@@ -97,6 +97,10 @@ done
 # bundle is cut for. BRIG_VERSION=latest still works for a local build.
 BRIG_VERSION="${BRIG_VERSION:-v0.5.0}"
 BRIG_REPO="${BRIG_REPO:-brig-sh/brig}"
+# A brig release with no brig-broker makes a bundle where a profile with a route
+# cannot start, so the build stops. BRIG_BROKER_REQUIRED=false builds one anyway,
+# for a brig from before the broker.
+BRIG_BROKER_REQUIRED="${BRIG_BROKER_REQUIRED:-true}"
 # urunc has no release that carries what brig needs, so it is built from
 # source, and the source is pinned to one commit. A branch tip
 # moves with every push, so it is not a release input: two builds of one bundle
@@ -1073,9 +1077,17 @@ if [ "$VARIANT" != "stock" ] || [ "${BRIG_IN_STOCK:-true}" = "true" ]; then
         [ -n "$BRIG_VERSION" ] || fatal "could not resolve the latest brig release from $BRIG_REPO"
         info "brig latest release is $BRIG_VERSION"
     fi
-    bare="${BRIG_VERSION#v}"
-    b_archive="brig-${bare}-linux-${ARCH}.tar.gz"
     b_base="$GITHUB/$BRIG_REPO/releases/download/$BRIG_VERSION"
+    # The archive is named for the version, which a channel prerelease does not
+    # spell as its tag: channel-main-0.4.2-0.2026... ships brig-0.4.2-0.2026....
+    # So the name comes from the release's own checksums, and the tag gives it
+    # only when there are none.
+    b_archive=""
+    if curl -sfL --retry 2 -o "$DL/brig-checksums.txt" "$b_base/checksums.txt" 2>/dev/null; then
+        b_archive="$(awk -v arch="$ARCH" '{ sub(/^\*/, "", $2) }
+            $2 ~ ("^brig-.*-linux-" arch "\\.tar\\.gz$") { print $2; exit }' "$DL/brig-checksums.txt")"
+    fi
+    [ -n "$b_archive" ] || b_archive="brig-${BRIG_VERSION#v}-linux-${ARCH}.tar.gz"
     fetch "$b_base/$b_archive" "$DL/brig.tar.gz"
     verify "$DL/brig.tar.gz" "$b_base/checksums.txt" "$b_archive"
     mkdir -p "$TMP_DIR/brig-unpack"
@@ -1093,6 +1105,8 @@ if [ "$VARIANT" != "stock" ] || [ "${BRIG_IN_STOCK:-true}" = "true" ]; then
         install -m 0755 "$bk" "$STAGE/bin/brig-broker"
         BRIG_BROKER_INSTALLED=true
         info "  packaged brig-broker from $b_archive"
+    elif [ "$BRIG_BROKER_REQUIRED" = "true" ]; then
+        fatal "no brig-broker in $b_archive, so a profile with a route cannot start on this bundle; set BRIG_BROKER_REQUIRED=false to build it anyway"
     else
         info "  no brig-broker in $b_archive: a profile with a route cannot start on this bundle"
     fi
