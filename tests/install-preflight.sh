@@ -24,11 +24,22 @@ T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/stub" "$T/home" "$T/run"
 
-# sudo: only -n true can succeed, and only when the test says sudo works.
+# sudo: only -n true can succeed, and only when the test says sudo works. With
+# that, -n sh -eu <file> is the installer making packages: it keeps the file,
+# and "installs" them as stubs unless the test says the install fails.
 cat > "$T/stub/sudo" <<STUB
 #!/bin/sh
 echo "\$*" >> "$T/sudo.log"
-[ "\$*" = "-n true" ] && [ -f "$T/sudo-ok" ] && exit 0
+[ -f "$T/sudo-ok" ] || exit 1
+[ "\$*" = "-n true" ] && exit 0
+if [ "\$1 \$2 \$3" = "-n sh -eu" ]; then
+    cp "\$4" "$T/sudo-ran.sh"
+    [ -f "$T/apt-fails" ] && exit 100
+    for b in newuidmap setfacl; do
+        printf '#!/bin/sh\nexit 0\n' > "$T/stub/\$b"; chmod 0755 "$T/stub/\$b"
+    done
+    exit 0
+fi
 exit 1
 STUB
 
@@ -109,6 +120,47 @@ grep -q "will make them with sudo" "$T/out.log" || { cat "$T/out.log" >&2; fail 
 grep -q "no-such-bundle" "$T/out.log" || { cat "$T/out.log" >&2; fail "the install did not go on"; }
 ok "with sudo the install goes on to the download"
 rm -f "$T/sudo-ok"
+
+# 2b. A fresh Ubuntu cloud image has neither uidmap nor acl. Without sudo: stop,
+#     with the packages in the root commands and the way to let it use sudo.
+if command -v newuidmap >/dev/null 2>&1 \
+    || command -v setfacl >/dev/null 2>&1; then
+    echo "SKIP: this host has uidmap or acl, so their absence cannot be staged"
+else
+    rm -f "$T/stub/newuidmap" "$T/stub/setfacl"
+    run_install
+    [ "$rc" -ne 0 ] || fail "the install went on without uidmap and acl"
+    grep -q "apt-get install -y uidmap acl" "$T/out.log" || { cat "$T/out.log" >&2; fail "the packages are not in the root commands"; }
+    grep -q "sudo -v" "$T/out.log" || { cat "$T/out.log" >&2; fail "no word that sudo -v lets the installer do it"; }
+    ok "without sudo, missing packages stop the install with the root commands"
+
+    # With sudo: install them before the download, check again, and go on.
+    touch "$T/sudo-ok"
+    run_install
+    grep -q "apt-get install -y uidmap acl" "$T/sudo-ran.sh" 2>/dev/null \
+        || { cat "$T/out.log" >&2; fail "the packages were not installed with sudo"; }
+    if grep -q "^usermod\|udev\|apparmor" "$T/sudo-ran.sh"; then
+        cat "$T/sudo-ran.sh" >&2
+        fail "the early sudo ran what brig-rootless-setup.sh makes"
+    fi
+    grep -q "no-such-bundle" "$T/out.log" || { cat "$T/out.log" >&2; fail "the install did not go on after the packages"; }
+    ok "with sudo, missing packages are installed and the install goes on"
+
+    # With sudo, and an install that fails: stop, and say so.
+    rm -f "$T/stub/newuidmap" "$T/stub/setfacl" "$T/sudo-ran.sh"
+    touch "$T/apt-fails"
+    run_install
+    [ "$rc" -ne 0 ] || fail "the install went on after the packages failed"
+    grep -q "making them with sudo failed" "$T/out.log" || { cat "$T/out.log" >&2; fail "no word that sudo failed"; }
+    if grep -q "sudo -v" "$T/out.log"; then
+        fail "a user whose sudo works was told to run sudo -v"
+    fi
+    ok "a failed package install stops the install"
+    rm -f "$T/apt-fails" "$T/sudo-ok"
+    for b in newuidmap setfacl; do
+        printf '#!/bin/sh\nexit 0\n' > "$T/stub/$b"; chmod 0755 "$T/stub/$b"
+    done
+fi
 
 # 3. Prepared by an admin, and no sudo: go on without asking for it.
 if [ -d /sys/module/vhost_vsock ] && ! grep -qsx vhost_vsock /etc/modules-load.d/*.conf /etc/modules; then

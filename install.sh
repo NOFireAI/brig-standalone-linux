@@ -263,12 +263,16 @@ verify_system() {
 #
 #   - No root can fix a missing login session or systemd, so those stop the
 #     install.
-#   - Packages and a subuid range are root's, and brig-rootless-setup.sh does
-#     not make them, so those stop the install too.
+#   - Packages and a subuid range brig-rootless-setup.sh does not make. With a
+#     sudo that runs without a password, the installer makes them here, before
+#     the download. A fresh Ubuntu cloud image lacks uidmap and acl, and
+#     stopping on them stopped a user who had that sudo.
 #   - The rest brig-rootless-setup.sh makes with sudo at the end of the
-#     install. Without a sudo that runs without a password, it would stop at a
-#     prompt after the whole bundle is downloaded and unpacked. So the install
-#     stops here instead.
+#     install.
+#
+# Without a sudo that runs without a password, any of these would stop at a
+# prompt after the whole bundle is downloaded and unpacked. So the install
+# stops here instead.
 #
 # Whatever needs root is printed as one block of commands for this user and
 # this prefix. An admin runs it once, and the next install needs no sudo. The
@@ -279,7 +283,10 @@ verify_rootless_prereqs() {
     need=""
     setup_can=true
     fix="$TMP_DIR/root-commands.sh"
+    # The part of $fix that brig-rootless-setup.sh does not make.
+    own="$TMP_DIR/root-own.sh"
     : > "$fix"
+    : > "$own"
 
     [ -d "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" ] \
         || miss="$miss\n  no ${XDG_RUNTIME_DIR:-/run/user/$(id -u)}: log in as this user first"
@@ -293,7 +300,7 @@ verify_rootless_prereqs() {
         || { need="$need\n  setfacl is missing"; pkgs="$pkgs acl"; }
     if [ -n "$pkgs" ]; then
         setup_can=false
-        echo "DEBIAN_FRONTEND=noninteractive apt-get install -y$pkgs </dev/null" >> "$fix"
+        echo "DEBIAN_FRONTEND=noninteractive apt-get install -y$pkgs </dev/null" | tee -a "$own" >> "$fix"
     fi
 
     # A range that overlaps another user's maps both users' containers onto the
@@ -304,7 +311,7 @@ verify_rootless_prereqs() {
         first=$(cat /etc/subuid /etc/subgid 2>/dev/null \
             | awk -F: '$2 + $3 > m {m = $2 + $3} END {print (m > 100000 ? m : 100000)}')
         last=$((first + 65535))
-        echo "usermod --add-subuids $first-$last --add-subgids $first-$last $me" >> "$fix"
+        echo "usermod --add-subuids $first-$last --add-subgids $first-$last $me" | tee -a "$own" >> "$fix"
     fi
 
     # The profile names the binary by path, so the one a /var/lib install left
@@ -400,6 +407,18 @@ FIX
     if [ -z "$miss" ] && [ -z "$need" ]; then
         return 0
     fi
+    if [ -z "$miss" ] && [ "$setup_can" = false ] && [ -z "${OWN_MADE:-}" ] \
+        && sudo -n true 2>/dev/null; then
+        OWN_MADE=true
+        warn "making what brig-rootless-setup.sh does not, with sudo:"
+        sed 's/^/    /' "$own" >&2
+        # A distribution without apt-get fails here, and the host is then one the
+        # commands below are for. Otherwise the check runs again on the new host.
+        if sudo -n sh -eu "$own" >&2; then
+            verify_rootless_prereqs
+            return 0
+        fi
+    fi
     if [ -z "$miss" ] && [ "$setup_can" = true ] && sudo -n true 2>/dev/null; then
         # Counted, not assumed: this said "two" whatever it had found, which
         # reads as a second thing the reader has missed.
@@ -415,10 +434,10 @@ FIX
     # shellcheck disable=SC2059
     printf "[brig-install] ERROR: this host is not set up for a rootless brig:$miss$need\n\n" >&2
     if [ -n "$need" ]; then
-        if [ "$setup_can" = true ]; then
-            why="sudo cannot run here without a password"
+        if [ -n "${OWN_MADE:-}" ]; then
+            why="making them with sudo failed, above"
         else
-            why="the installer does not install packages or add subuid ranges"
+            why="sudo cannot run here without a password"
         fi
         cat >&2 <<MSG
   Nothing was downloaded: $why.
@@ -430,7 +449,7 @@ $(cat "$fix")
 BRIG_ROOT
 
 MSG
-        if [ "$setup_can" = true ]; then
+        if [ -z "${OWN_MADE:-}" ]; then
             echo "  With sudo of your own, run 'sudo -v' and then this installer again: it" >&2
             echo "  makes these itself." >&2
         fi

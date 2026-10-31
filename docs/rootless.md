@@ -169,10 +169,12 @@ root and several users, `brig-ctl rootless` against one shared install is the
 better trade.
 
 The host prerequisites above still apply, and `install.sh --user` checks them
-before it downloads anything. When sudo runs without a password, it goes on and
-the rootless setup makes them with sudo at the end. When it does not, the
-installer stops there. It prints the commands that prepare the host for this
-user and this prefix, as one block for root:
+before it downloads anything. When sudo runs without a password, as on a cloud
+image, the installer makes them itself: it installs `uidmap` and `acl` and adds
+a subuid range before the download, and the rootless setup makes the rest at
+the end. When sudo needs a password, the installer stops there. It prints the
+commands that prepare the host for this user and this prefix, as one block for
+root:
 
 ```console
 $ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/main/install.sh | sh -
