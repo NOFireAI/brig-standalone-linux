@@ -40,7 +40,7 @@ fi
 if [ "\$1 \$2 \$3" = "-n sh -eu" ]; then
     cp "\$4" "$T/sudo-ran.sh"
     [ -f "$T/apt-fails" ] && exit 100
-    for b in newuidmap setfacl; do
+    for b in newuidmap setfacl iptables; do
         printf '#!/bin/sh\nexit 0\n' > "$T/stub/\$b"; chmod 0755 "$T/stub/\$b"
     done
     exit 0
@@ -82,7 +82,7 @@ STUB
 # modinfo: no module is missing but loadable, so the result does not depend on
 # what this kernel has loaded.
 printf '#!/bin/sh\nexit 1\n' > "$T/stub/modinfo"
-for b in newuidmap setfacl systemctl; do
+for b in newuidmap setfacl iptables systemctl; do
     printf '#!/bin/sh\nexit 0\n' > "$T/stub/$b"
 done
 chmod 0755 "$T/stub"/*
@@ -196,10 +196,32 @@ else
     if grep -q '^-v$' "$T/sudo.log"; then fail "a user in no sudo group was asked for a password"; fi
     ok "no terminal, or no sudo group, means no password prompt"
     rm -f "$T/sudo-pass" "$T/tty"
-    for b in newuidmap setfacl; do
+    for b in newuidmap setfacl iptables; do
         printf '#!/bin/sh\nexit 0\n' > "$T/stub/$b"; chmod 0755 "$T/stub/$b"
     done
 fi
+
+# 2c. The packages come from the package manager the host has, by its names.
+sed -n '/^install_tools_cmd()/,/^}/p' "$here/install.sh" > "$T/tools-fn.sh"
+for pm in apt-get dnf yum zypper pacman none; do
+    mkdir -p "$T/pm-$pm"
+    [ "$pm" = none ] || { printf '#!/bin/sh\n' > "$T/pm-$pm/$pm"; chmod 0755 "$T/pm-$pm/$pm"; }
+    got="$(PATH="$T/pm-$pm" /bin/sh -c ". '$T/tools-fn.sh'; install_tools_cmd newuidmap setfacl")"
+    case "$pm" in
+        apt-get) want="DEBIAN_FRONTEND=noninteractive apt-get install -y uidmap acl </dev/null" ;;
+        dnf) want="dnf install -y shadow-utils acl" ;;
+        yum) want="yum install -y shadow-utils acl" ;;
+        zypper) want="zypper --non-interactive install shadow acl" ;;
+        pacman) want="pacman -S --noconfirm --needed shadow acl" ;;
+        none) want="# install shadow acl with this host's package manager: none that this installer knows is here" ;;
+    esac
+    [ "$got" = "$want" ] || fail "with $pm: got '$got', want '$want'"
+done
+got="$(PATH="$T/pm-dnf" /bin/sh -c ". '$T/tools-fn.sh'; install_tools_cmd iptables")"
+[ "$got" = "dnf install -y iptables-nft" ] || fail "iptables on dnf: got '$got'"
+got="$(PATH="$T/pm-zypper" /bin/sh -c ". '$T/tools-fn.sh'; install_tools_cmd iptables")"
+[ "$got" = "zypper --non-interactive install iptables" ] || fail "iptables on zypper: got '$got'"
+ok "the packages come from the host's own package manager"
 
 # 3. Prepared by an admin, and no sudo: go on without asking for it.
 if [ -d /sys/module/vhost_vsock ] && ! grep -qsx vhost_vsock /etc/modules-load.d/*.conf /etc/modules; then

@@ -74,7 +74,7 @@ STUB
 printf '#!/bin/sh\necho 0\n' > "$T/stub/sysctl"
 printf '#!/bin/sh\n[ "$*" = "-n true" ]\n' > "$T/stub/sudo"
 printf '#!/bin/sh\nexit 1\n' > "$T/stub/modinfo"
-for b in newuidmap setfacl systemctl cosign; do
+for b in newuidmap setfacl iptables systemctl cosign; do
     printf '#!/bin/sh\nexit 0\n' > "$T/stub/$b"
 done
 chmod 0755 "$T/stub"/*
