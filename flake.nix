@@ -31,5 +31,20 @@
           default = brig-runtime;
         }
       );
+
+      nixosModules.default = import ./nix/module.nix;
+
+      checks = forAll (
+        pkgs:
+        let
+          brig-runtime = self.packages.${pkgs.system}.brig-runtime;
+        in
+        {
+          module = pkgs.callPackage ./nix/test.nix {
+            module = self.nixosModules.default;
+            inherit brig-runtime;
+          };
+        }
+      );
     };
 }
