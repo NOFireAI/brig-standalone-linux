@@ -36,6 +36,34 @@ sudo modprobe vhost_vsock
 echo vhost_vsock | sudo tee /etc/modules-load.d/brig.conf
 ```
 
+## NixOS
+
+The flake exports a module. With it, the unit, the kernel modules and the
+directories are declared, and `brig` is on PATH:
+
+```nix
+{
+  inputs.brig-runtime.url = "github:NOFireAI/brig-standalone-linux";
+  outputs = { nixpkgs, brig-runtime, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        brig-runtime.nixosModules.default
+        {
+          services.brig.enable = true;
+          services.brig.package = brig-runtime.packages.x86_64-linux.brig-runtime;
+        }
+      ];
+    };
+  };
+}
+```
+
+`nix flake check` runs a NixOS VM test of the module: the unit comes up,
+the socket appears, `brig doctor` finds the runtime and the boot assets.
+The test VM has no network, so it boots no sandbox. It needs KVM on the
+host that runs it.
+
 ## Why some pieces are binaries
 
 Three things in `brig-guest` are not built here. The guest kernel comes from
