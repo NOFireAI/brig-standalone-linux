@@ -184,8 +184,9 @@ $ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/ma
   no access to /dev/kvm from inside the user namespace
   no access to /dev/vhost-vsock from inside the user namespace
 
-  Nothing was downloaded: sudo cannot run here without a password.
-  Run the commands below as root, or ask an admin to, and then run this
+  The installer stopped before it downloaded the bundle: sudo cannot run here
+  without a password.
+  Run the commands below as root, or ask an admin to, and then run the
   installer again. It needs no sudo after that.
 
 sudo sh -eu <<'BRIG_ROOT'
