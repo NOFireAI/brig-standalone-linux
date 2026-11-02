@@ -12,7 +12,10 @@ sandbox needs.
 | `brig-runtime` | The default. `brig` wrapped with the environment the bundle's `brig-env.sh` sets, `brig-containerd` to run containerd with the bundle's config, and a systemd unit. containerd, nerdctl and the CNI plugins come from nixpkgs. |
 
 Only root drives this stack, as with the bundle's node-wide install. There
-is no rootless path.
+is no rootless path here yet, and rootless is the safer shape: the host
+directories a sandbox shares are then reached with a user's own
+privileges and not root's. The bundle's `--rootless` mode and
+[docs/rootless.md](../docs/rootless.md) describe it.
 
 containerd, nerdctl and the CNI plugins come from the nixpkgs that
 `flake.lock` pins, so their versions are not the ones
@@ -62,6 +65,7 @@ directories are declared, and `brig` is on PATH:
         {
           services.brig.enable = true;
           services.brig.package = brig-runtime.packages.x86_64-linux.brig-runtime;
+          system.stateVersion = "25.11";
         }
       ];
     };
