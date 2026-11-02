@@ -183,7 +183,15 @@ runCommand "brig-runtime"
         --prefix PATH : "${clientPath}"
     done
     ln -s ${brig}/bin/brig-broker $out/bin/brig-broker
-    ln -s ${nerdctl}/bin/nerdctl $out/bin/nerdctl
+    # nerdctl with the same defaults, so a hand-run `nerdctl ps` talks to
+    # brig's containerd and not to /run/containerd.
+    makeWrapper ${nerdctl}/bin/nerdctl $out/bin/nerdctl \
+      --set-default CONTAINERD_ADDRESS "unix://${sock}" \
+      --set-default CONTAINERD_NAMESPACE brig \
+      --set-default CONTAINERD_SNAPSHOTTER overlayfs \
+      --set-default NERDCTL_TOML "${etc}/etc/nerdctl.toml" \
+      --set-default CNI_PATH "${cni-plugins}/bin" \
+      --prefix PATH : "${clientPath}"
 
     cat > $out/bin/brig-containerd <<EOF
     #!${stdenv.shell}
@@ -192,10 +200,10 @@ runCommand "brig-runtime"
     mkdir -p ${runDir} ${stateDir}/log ${stateDir}/cni/net.d
     chmod 0710 ${runDir}
     # nerdctl writes a lock and one conflist per sandbox network into the CNI
-    # config directory, so it cannot be the store. The bridge config is seeded
-    # once; on NixOS the store is read-only and this is where it showed.
-    [ -e ${stateDir}/cni/net.d/10-brig-bridge.conflist ] \
-      || install -m 0644 ${etc}/etc/cni/net.d/10-brig-bridge.conflist ${stateDir}/cni/net.d/
+    # config directory, so it cannot be the store. The bridge config is copied
+    # on every start, so a new package updates it; on NixOS the store is
+    # read-only and this is where it showed.
+    install -m 0644 ${etc}/etc/cni/net.d/10-brig-bridge.conflist ${stateDir}/cni/net.d/
     export PATH="${daemonPath}:\$PATH"
     export URUNC_CONFIG_FILE="${etc}/etc/urunc.toml"
     exec ${containerd}/bin/containerd --config ${etc}/etc/containerd.toml "\$@"

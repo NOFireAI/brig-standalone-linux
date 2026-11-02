@@ -72,7 +72,7 @@
       checks = forAll (
         pkgs:
         let
-          brig-runtime = self.packages.${pkgs.system}.brig-runtime;
+          brig-runtime = self.packages.${pkgs.stdenv.hostPlatform.system}.brig-runtime;
         in
         {
           module = pkgs.callPackage ./nix/test.nix {

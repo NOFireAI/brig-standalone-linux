@@ -35,6 +35,9 @@ list is under [What it touches outside the base directories](#what-it-touches-ou
 
 ## Install
 
+On a host with nix, or on NixOS, see [nix/README.md](nix/README.md): the
+flake builds brig with this runtime, and a module declares the service.
+
 ```console
 # curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/main/install.sh | sh -
 ```
