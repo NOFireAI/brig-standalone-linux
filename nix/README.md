@@ -67,11 +67,21 @@ the socket appears, `brig doctor` finds the runtime and the boot assets.
 The test VM has no network, so it boots no sandbox. It needs KVM on the
 host that runs it.
 
-For a sandbox boot on NixOS with network, the flake has a demo machine:
+A sandbox needs network, which the test VM has not. To boot one on NixOS,
+give the configuration above a VM variant and build that:
+
+```nix
+virtualisation.vmVariant.virtualisation = {
+  memorySize = 4096;
+  cores = 2;
+  diskSize = 8192;
+  graphics = false;
+};
+```
 
 ```sh
-nix build .#nixosConfigurations.demo.config.system.build.vm
-./result/bin/run-nixos-vm        # root, password demo, ssh on port 2222
+nix build .#nixosConfigurations.host.config.system.build.vm
+./result/bin/run-nixos-vm
 ```
 
 Three things only showed up on NixOS, because a single-user nix store on
@@ -118,8 +128,9 @@ appeared on the host, nothing was written under `/nix/store`, `nix store
 verify` passed on the closure, and the unit, `vhost_vsock` and a new
 sandbox came back after a reboot.
 
-NixOS 26.11, the demo machine above, run as a qemu VM on a Debian host
-on 2 November 2026, so the sandbox was a third level of virtualization:
+NixOS 26.11, built from the module with user-mode network, run as a qemu
+VM on a Debian host on 2 November 2026, so the sandbox was a third level
+of virtualization:
 `brig doctor` all `ok`, `brig run ubuntu` pulled the image and booted, the
 guest agent answered within seconds, `brig sh` ran commands in the guest in
 about a second, DNS resolved, a file written under `/work` appeared on the
