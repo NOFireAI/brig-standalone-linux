@@ -37,26 +37,10 @@ in
       "d /run/brig 0710 root root -"
     ];
 
-    systemd.services.brig-containerd = {
-      description = "brig containerd";
-      documentation = [ "https://github.com/brig-sh/brig" ];
-      after = [
-        "network.target"
-        "local-fs.target"
-      ];
-      wantedBy = [ "multi-user.target" ];
-      serviceConfig = {
-        Type = "notify";
-        Delegate = true;
-        KillMode = "process";
-        Restart = "always";
-        RestartSec = 5;
-        ExecStart = "${cfg.package}/bin/brig-containerd";
-        LimitNPROC = "infinity";
-        LimitCORE = "infinity";
-        TasksMax = "infinity";
-        OOMScoreAdjust = -999;
-      };
-    };
+    # The unit comes from the package, so this module and a host that copies
+    # the file by hand run the same definition. NixOS ignores [Install] in a
+    # packaged unit, so the target is named here.
+    systemd.packages = [ cfg.package ];
+    systemd.services.brig-containerd.wantedBy = [ "multi-user.target" ];
   };
 }
