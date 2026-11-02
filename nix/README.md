@@ -67,6 +67,26 @@ the socket appears, `brig doctor` finds the runtime and the boot assets.
 The test VM has no network, so it boots no sandbox. It needs KVM on the
 host that runs it.
 
+For a sandbox boot on NixOS with network, the flake has a demo machine:
+
+```sh
+nix build .#nixosConfigurations.demo.config.system.build.vm
+./result/bin/run-nixos-vm        # root, password demo, ssh on port 2222
+```
+
+Three things only showed up on NixOS, because a single-user nix store on
+Debian is writable by root and `/usr/sbin` and `/lib` exist there:
+
+- nerdctl writes a lock and one conflist per sandbox network into the CNI
+  config directory, so that directory is `/var/lib/brig/agent/cni/net.d`,
+  seeded from the store when `brig-containerd` starts.
+- urunc runs `/usr/sbin/mke2fs` by default to build the overlay-block
+  rootfs. `urunc.toml` points it at the nixpkgs `mke2fs`.
+- urunc binds `/lib`, `/lib64` and `/usr/lib` into the monitor's rootfs for
+  a dynamically linked monitor. NixOS has no `/lib` or `/usr/lib`, and the
+  monitors here are static. `nix/urunc-optional-libdirs.patch` skips a
+  directory that is not there, as upstream already does for `/lib64`.
+
 ## Why some pieces are binaries
 
 Three things in `brig-guest` are not built here. The guest kernel comes from
@@ -89,7 +109,24 @@ the containerd socket at `/run/brig/containerd.sock`, the CNI bridge
 ## Tested
 
 Debian 12 on a GCP `n2-standard-4` with nested virtualization and
-single-user nix, on 1 November 2026: `brig doctor` all `ok`, `brig run
-ubuntu` booted, DNS and `apt-get update` worked in the guest, a file
-written under `/work` appeared on the host, and the unit came back after a
-reboot.
+single-user nix, on 2 November 2026, following the steps above on a host
+with nothing else on it: `nix build` from this repository took 2 minutes
+(binaries from cache.nixos.org, `brig` and `urunc` built from source),
+`brig doctor` all `ok`, a sandbox booted in 14 seconds on first pull,
+`apt-get update` ran in the guest, a file written under `/work/demo`
+appeared on the host, nothing was written under `/nix/store`, `nix store
+verify` passed on the closure, and the unit, `vhost_vsock` and a new
+sandbox came back after a reboot.
+
+NixOS 26.11, the demo machine above, run as a qemu VM on a Debian host
+on 2 November 2026, so the sandbox was a third level of virtualization:
+`brig doctor` all `ok`, `brig run ubuntu` pulled the image and booted, the
+guest agent answered within seconds, `brig sh` ran commands in the guest in
+about a second, DNS resolved, a file written under `/work` appeared on the
+host.
+
+On a scripted host, run `brig telemetry off` or `on` once first. The
+first `brig run` on a tty otherwise waits on the consent prompt, and
+`brig run` without `-d` stays attached.
+
+Not tested: aarch64, a NixOS host on real hardware.

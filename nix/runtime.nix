@@ -14,6 +14,7 @@
   util-linux,
   cosign,
   oras,
+  e2fsprogs,
 }:
 
 # The Linux runtime around brig: containerd with the urunc shim, the CNI
@@ -59,7 +60,7 @@ let
     namespace = "brig"
     snapshotter = "overlayfs"
     cni_path = "${cni-plugins}/bin"
-    cni_netconfpath = "$out/etc/cni/net.d"
+    cni_netconfpath = "${stateDir}/cni/net.d"
     data_root = "${stateDir}/nerdctl"
     cgroup_manager = "systemd"
     hosts_dir = ["$out/etc/certs.d"]
@@ -90,6 +91,11 @@ let
     [extra_binaries.virtiofsd]
     path = "${brig-guest}/bin/virtiofsd"
     options = "--cache always --sandbox none"
+
+    # urunc builds the overlay-block rootfs with mke2fs before it pivots,
+    # and defaults to /usr/sbin/mke2fs, which a NixOS host does not have.
+    [extra_binaries.mke2fs]
+    path = "${e2fsprogs}/bin/mke2fs"
     EOF
 
     cat > $out/etc/cni/net.d/10-brig-bridge.conflist <<EOF
@@ -183,8 +189,13 @@ runCommand "brig-runtime"
     #!${stdenv.shell}
     # The containerd brig drives. Run as root.
     set -eu
-    mkdir -p ${runDir} ${stateDir}/log
+    mkdir -p ${runDir} ${stateDir}/log ${stateDir}/cni/net.d
     chmod 0710 ${runDir}
+    # nerdctl writes a lock and one conflist per sandbox network into the CNI
+    # config directory, so it cannot be the store. The bridge config is seeded
+    # once; on NixOS the store is read-only and this is where it showed.
+    [ -e ${stateDir}/cni/net.d/10-brig-bridge.conflist ] \
+      || install -m 0644 ${etc}/etc/cni/net.d/10-brig-bridge.conflist ${stateDir}/cni/net.d/
     export PATH="${daemonPath}:\$PATH"
     export URUNC_CONFIG_FILE="${etc}/etc/urunc.toml"
     exec ${containerd}/bin/containerd --config ${etc}/etc/containerd.toml "\$@"

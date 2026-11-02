@@ -1,0 +1,27 @@
+--- a/pkg/unikontainers/rootfs_linux.go	2026-11-02 10:34:02.187566617 +0000
++++ b/pkg/unikontainers/rootfs_linux.go	2026-11-02 10:34:02.211569260 +0000
+@@ -369,16 +369,15 @@
+ 	monitorName := filepath.Base(monitorPath)
+ 	// TODO: Remove most of these when we switch to static binaries.
+ 	if monitorName != "firecracker" {
+-		mounts = append(mounts, bindMount("/lib", "/lib", true, true))
+-
+-		// If /lib64 does not exist, just ignore it
+-		if _, err := os.Stat("/lib64"); err == nil {
+-			mounts = append(mounts, bindMount("/lib64", "/lib64", true, true))
+-		} else if !os.IsNotExist(err) {
+-			return nil, err
++		// A host may lack any of these: NixOS has no /lib or /usr/lib. A static
++		// monitor needs none of them, so an absent one is skipped.
++		for _, dir := range []string{"/lib", "/lib64", "/usr/lib"} {
++			if _, err := os.Stat(dir); err == nil {
++				mounts = append(mounts, bindMount(dir, dir, true, true))
++			} else if !os.IsNotExist(err) {
++				return nil, err
++			}
+ 		}
+-
+-		mounts = append(mounts, bindMount("/usr/lib", "/usr/lib", true, true))
+ 	}
+ 
+ 	if len(monitorName) >= 4 && monitorName[:4] == "qemu" {
