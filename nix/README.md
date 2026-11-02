@@ -14,6 +14,13 @@ sandbox needs.
 Only root drives this stack, as with the bundle's node-wide install. There
 is no rootless path.
 
+containerd, nerdctl and the CNI plugins come from the nixpkgs that
+`flake.lock` pins, so their versions are not the ones
+`scripts/build-bundle.sh` pins for the bundle. At this lock, nix gives
+containerd and nerdctl 2.4.1 where the bundle carries 2.3.5, and `nix
+flake update` moves them. containerd 2.4.1 logs a harmless `-info` flag
+error against the 1.7-era shim.
+
 ## Install on a host with nix
 
 ```sh
@@ -65,7 +72,9 @@ directories are declared, and `brig` is on PATH:
 `nix flake check` runs a NixOS VM test of the module: the unit comes up,
 the socket appears, `brig doctor` finds the runtime and the boot assets.
 The test VM has no network, so it boots no sandbox. It needs KVM on the
-host that runs it.
+host that runs it, and on single-user nix it hangs with no output unless
+the build user can open `/dev/kvm` and `~/.config/nix/nix.conf` has
+`system-features = nixos-test kvm`.
 
 A sandbox needs network, which the test VM has not. To boot one on NixOS,
 give the configuration above a VM variant and build that:
@@ -88,8 +97,9 @@ Three things only showed up on NixOS, because a single-user nix store on
 Debian is writable by root and `/usr/sbin` and `/lib` exist there:
 
 - nerdctl writes a lock and one conflist per sandbox network into the CNI
-  config directory, so that directory is `/var/lib/brig/agent/cni/net.d`,
-  seeded from the store when `brig-containerd` starts.
+  config directory, so that directory is `/var/lib/brig/agent/cni/net.d`.
+  `brig-containerd` copies the bridge config there from the store on every
+  start.
 - urunc runs `/usr/sbin/mke2fs` by default to build the overlay-block
   rootfs. `urunc.toml` points it at the nixpkgs `mke2fs`.
 - urunc binds `/lib`, `/lib64` and `/usr/lib` into the monitor's rootfs for
