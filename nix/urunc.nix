@@ -21,6 +21,12 @@ buildGoModule (finalAttrs: {
 
   vendorHash = "sha256-08PC8ethomYCZTBfP1PVCCXgXeyrSHHoozcVsWmqJUE=";
 
+  # urunc binds /lib, /lib64 and /usr/lib from the host into the monitor's
+  # rootfs for a dynamically linked monitor. NixOS has no /lib or /usr/lib,
+  # and the monitors here are static. The patch skips a directory that is
+  # not there, as upstream already does for /lib64.
+  patches = [ ./urunc-optional-libdirs.patch ];
+
   subPackages = [
     "cmd/urunc"
     "cmd/containerd-shim-urunc-v2"
