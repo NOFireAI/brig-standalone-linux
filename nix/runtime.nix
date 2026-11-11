@@ -12,6 +12,7 @@
   iptables,
   nftables,
   util-linux,
+  coreutils,
   cosign,
   oras,
   e2fsprogs,
@@ -143,6 +144,7 @@ let
     urunc
     iptables
     util-linux
+    coreutils
   ];
 in
 runCommand "brig-runtime"
@@ -197,6 +199,7 @@ runCommand "brig-runtime"
     #!${stdenv.shell}
     # The containerd brig drives. Run as root.
     set -eu
+    export PATH="${daemonPath}:\$PATH"
     mkdir -p ${runDir} ${stateDir}/log ${stateDir}/cni/net.d
     chmod 0710 ${runDir}
     # nerdctl writes a lock and one conflist per sandbox network into the CNI
@@ -204,7 +207,6 @@ runCommand "brig-runtime"
     # on every start, so a new package updates it; on NixOS the store is
     # read-only and this is where it showed.
     install -m 0644 ${etc}/etc/cni/net.d/10-brig-bridge.conflist ${stateDir}/cni/net.d/
-    export PATH="${daemonPath}:\$PATH"
     export URUNC_CONFIG_FILE="${etc}/etc/urunc.toml"
     exec ${containerd}/bin/containerd --config ${etc}/etc/containerd.toml "\$@"
     EOF
