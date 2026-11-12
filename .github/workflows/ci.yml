@@ -174,6 +174,12 @@ jobs:
           grep -qx "URUNC_PINNED=true" "$p" || { echo "pins.env does not say URUNC_PINNED=true"; exit 1; }
           grep -qx "ASSETS_URUNC_REF=$want" "$p" \
             || { echo "pins.env does not carry ASSETS_URUNC_REF=$want"; exit 1; }
+          # hull is built from a pinned commit the same way.
+          want="$(sed -n 's/^HULL_REF_DEFAULT=\([0-9a-f]\{40\}\)$/\1/p' scripts/build-bundle.sh)"
+          [ -n "$want" ] || { echo "no HULL_REF_DEFAULT in build-bundle.sh"; exit 1; }
+          grep -E "^HULL_(REF|PINNED)=" "$p"
+          grep -qx "HULL_REF=$want" "$p" || { echo "pins.env does not carry HULL_REF=$want"; exit 1; }
+          grep -qx "HULL_PINNED=true" "$p" || { echo "pins.env does not say HULL_PINNED=true"; exit 1; }
           # hvi is fetched from the release the script pins; fetch-hvi.sh
           # fails the build unless its signature and sums check out.
           grep -E "^HVI_(VERSION|COMMIT)=" "$p"
@@ -192,6 +198,44 @@ jobs:
           [ -n "$want" ] || { echo "$urunc_repo@$urunc_ref has no urunit.pin naming a commit"; exit 1; }
           grep -E "^URUNIT_(REPO|REF)=" "$p"
           grep -qx "URUNIT_REF=$want" "$p" || { echo "pins.env does not carry URUNIT_REF=$want, urunc's pin"; exit 1; }
+
+      # brig tells the Linux hull from the macOS one by the platform at the end
+      # of hull --version, and the launcher has to hand brig the binary of the
+      # runtime it asked for: nerdctl by default, hull when BRIG_RUNTIME=hull.
+      # The launcher is sourced as this runner's user, so a rootless bundle
+      # takes its non-root branch.
+      - name: Check hull and the launcher
+        run: |
+          set -eu
+          d="$(mktemp -d)"
+          tar -xzf "$(ls dist/*.tar.gz)" -C "$d"
+          t="$(echo "$d"/*)"
+          v="$("$t/bin/hull" --version)"
+          echo "$v"
+          case "$v" in
+            *"linux/${{ matrix.arch }})") ;;
+            *) echo "hull --version does not end in linux/${{ matrix.arch }}"; exit 1 ;;
+          esac
+          # The tree is unpacked here, not at the prefix it was built for, and
+          # the launcher's paths name that prefix.
+          prefix="$(sed -n 's/^PREFIX=//p' dist/*.pins.env)"
+          launcher() {
+            env -i HOME="$HOME" PATH=/usr/bin:/bin "$@" \
+              sh -c ". '$t/etc/brig-env.sh'; echo \"\$BRIG_RUNTIME \$BRIG_RUNTIME_BIN \$NETCONFPATH\""
+          }
+          case "${{ matrix.rootless }}" in
+            rootless) net="$HOME/.config/brig/cni/net.d" ;;
+            *)        net="$prefix/etc/cni/net.d" ;;
+          esac
+          got="$(launcher)"
+          [ "$got" = "nerdctl $prefix/bin/nerdctl $net" ] \
+            || { echo "default launcher: got '$got'"; exit 1; }
+          got="$(launcher BRIG_RUNTIME=hull)"
+          [ "$got" = "hull $prefix/bin/hull $net" ] \
+            || { echo "BRIG_RUNTIME=hull launcher: got '$got'"; exit 1; }
+          got="$(launcher BRIG_RUNTIME=hull BRIG_RUNTIME_BIN=/opt/hull NETCONFPATH=/opt/net)"
+          [ "$got" = "hull /opt/hull /opt/net" ] \
+            || { echo "the launcher overrode the caller's values: got '$got'"; exit 1; }
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

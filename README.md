@@ -111,7 +111,7 @@ $ sha256sum -c checksums.txt --ignore-missing
   data/                    immutable, unpacked from the tarball:
     bin/            brig, brigd, brig-broker (from a brig release that carries it),
                     urunc, containerd-shim-urunc-v2, containerd, ctr,
-                    runc, nerdctl, cosign, oras, hvi, firecracker,
+                    runc, nerdctl, hull, cosign, oras, hvi, firecracker,
                     cloud-hypervisor, solo5-hvt, solo5-spt, brig-ctl,
                     brig-pool-up, brig-uninstall.sh
     libexec/        virtiofsd
@@ -185,6 +185,25 @@ $ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/ma
 
 [docs/rootless.md](docs/rootless.md) has the detail, including the two things
 that still need root once per host, and what a home install gives up.
+
+### hull beside nerdctl
+
+nerdctl is brig's runtime here. The bundle also carries hull, the runtime brig
+drives on macOS, built for Linux: a containerd client that boots the same urunc,
+monitors and guest assets. `BRIG_RUNTIME=hull` selects it, and the launcher then
+points brig at the bundle's hull rather than its nerdctl:
+
+```console
+$ BRIG_RUNTIME=hull brig doctor
+```
+
+It needs a brig that drives hull on Linux, which the `v0.5.0` in this bundle
+does not. Even then, hull on Linux boots a sandbox on the shared bridge or with
+no network, and brig refuses what it cannot enforce there yet: an egress policy,
+a route, `network: isolated` and a published port. The shipped agent profiles
+ask for an isolated network, so they stay on nerdctl for now. Every value the
+launcher sets still defers to the environment, so `BRIG_RUNTIME_BIN` points brig
+at another hull.
 
 ## Driving the runtime by hand
 
@@ -280,12 +299,13 @@ the install does not. Running `build-bundle.sh` by hand to cross-build the other
 architecture needs qemu/binfmt instead of a native runner.
 
 `build-bundle.sh` fetches the components that have upstream releases and builds
-urunc, which has none:
+urunc and hull, which have none for Linux:
 
 | Component | Source | In the tarball |
 | --- | --- | --- |
 | brig, brigd, brig-broker | `brig-sh/brig` release | fetched, verified against its signed `checksums.txt` |
 | urunc, containerd-shim-urunc-v2 | built from `urunc-dev/urunc` at commit `3c00b69` (branch `feat/linux-hvi-v050`) | CGO-static, built in a Go container |
+| hull | built from `brig-sh/hull` at commit `fb41d4a` (branch `main`), which publishes no Linux release | static (`CGO_ENABLED=0`), built in a Go container, with no telemetry endpoint |
 | hvi | `brig-sh/hvi-vmm` release `v0.1.0-rc.2` (commit `2ed8f61`), the one hull ships on macOS | fetched, musl-static; its `SHA256SUMS` cosign-verified against hvi-vmm's release workflow, the tarball pinned by sha256 |
 | guest kernel, container-initrd | `ghcr.io/nofireai/hull-assets` `0.1.11` | fetched by digest once its cosign signature checks out; the initrd is urunit. urunc's `packaging/container-initrd/urunit.pin` names `48a61bd`; hull-assets `0.1.11` does not record its urunit, so the bundle records that commit as `urunit_expected`. The build refuses a hull-assets bundle built from another urunc |
 | monitors, virtiofsd | `urunc-dev/monitors-build` | fetched, pinned by sha256 |
@@ -340,6 +360,12 @@ $ URUNC_REF= URUNC_BRANCH=feat/unchanged_containers scripts/build-bundle.sh --ar
 A branch given without a ref is refused, since it is unclear which of the two
 was meant. A tip build also has to match the guest assets (below), so it fails
 unless `ASSETS_VERSION` names a hull-assets release built from that tip.
+
+hull is pinned the same way, with `HULL_REF_DEFAULT` and `HULL_BRANCH_DEFAULT`,
+recorded in `pins.env` as `HULL_REF` and `HULL_PINNED`, and `HULL_REF` and
+`HULL_BRANCH` work as their urunc counterparts do. The two pins move together:
+hull on Linux writes urunc's annotations, and hull checks them against one urunc
+commit (its `internal/urunckeys`), which has to be this bundle's urunc.
 
 ### The initrd comes from hull-assets, checked against urunc
 

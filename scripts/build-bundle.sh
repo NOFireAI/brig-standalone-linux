@@ -9,11 +9,12 @@
 # The tarball is a complete /var/lib/brig/data tree: brig and brigd (and brig-broker,
 # from a brig release that carries it), cosign and oras, the
 # private-containerd stack (containerd, ctr, runc, nerdctl, CNI), the microVM
-# monitors, the urunc runtime, the guest kernel and initrd, plus every config
-# file, systemd unit, wrapper and the uninstaller. Most components are upstream
-# release artifacts, hvi among them. The kernel and the initrd come from the
-# signed hull-assets bundle. urunc is built here from urunc-dev/urunc, because
-# no urunc release carries what brig needs.
+# monitors, the urunc runtime, hull, the guest kernel and initrd, plus every
+# config file, systemd unit, wrapper and the uninstaller. Most components are
+# upstream release artifacts, hvi among them. The kernel and the initrd come
+# from the signed hull-assets bundle. urunc is built here from urunc-dev/urunc,
+# because no urunc release carries what brig needs, and hull from brig-sh/hull,
+# which publishes no Linux release.
 #
 #   scripts/build-bundle.sh --arch amd64 --version v0.1.0 --out dist
 #   scripts/build-bundle.sh --arch arm64 --version v0.1.0 --variant generic-boot
@@ -127,6 +128,17 @@ URUNC_REPO="${URUNC_REPO:-urunc-dev/urunc}"
 URUNC_BRANCH_DEFAULT=feat/linux-hvi-v050
 URUNC_REF_DEFAULT=3c00b69ff9ac1b8bb260975cdc63d18a7043558b
 URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.8}"
+# hull: the runtime brig drives on macOS, here as a containerd client that boots
+# through the urunc above. brig on Linux still drives nerdctl by default, and
+# BRIG_RUNTIME=hull opts in, so the bundle carries both. hull publishes no Linux
+# release, so it is built from source and pinned like urunc, with the same
+# *_BRANCH and *_REF rules. hull checks the urunc keys it writes against one
+# urunc commit (its internal/urunckeys), which must be URUNC_REF_DEFAULT: a
+# urunc bump moves this pin to a hull that checks against the new commit.
+HULL_REPO="${HULL_REPO:-brig-sh/hull}"
+HULL_BRANCH_DEFAULT=main
+HULL_REF_DEFAULT=fb41d4a05d4a3b5df4102dc8de0a15cd22d3aaa3
+HULL_GO_IMAGE="${HULL_GO_IMAGE:-golang:1.26.8}"
 # urunit, the one binary of the initrd, is not built here: the initrd comes from
 # hull-assets. pins.env records the urunit commit that urunc pins in
 # packaging/container-initrd/urunit.pin.
@@ -143,6 +155,9 @@ HVI_SHA256_LINUX_ARM64=3c11e3b1443fb9e39a652a0011ac74d548a7bd05674b6c4115ffbd5a0
 if [ -n "${URUNC_BRANCH:-}" ] && [ "$URUNC_BRANCH" != "$URUNC_BRANCH_DEFAULT" ] && [ -z "${URUNC_REF+set}" ]; then
     fatal "URUNC_BRANCH=$URUNC_BRANCH is set but URUNC_REF is not. Set URUNC_REF= to build that branch's tip, or URUNC_REF=<commit> to build one commit from it."
 fi
+if [ -n "${HULL_BRANCH:-}" ] && [ "$HULL_BRANCH" != "$HULL_BRANCH_DEFAULT" ] && [ -z "${HULL_REF+set}" ]; then
+    fatal "HULL_BRANCH=$HULL_BRANCH is set but HULL_REF is not. Set HULL_REF= to build that branch's tip, or HULL_REF=<commit> to build one commit from it."
+fi
 if [ -n "${URUNIT_REF+set}" ] || [ -n "${URUNIT_BRANCH+set}" ] || [ -n "${URUNIT_REPO+set}" ]; then
     fatal "urunit is no longer built here: URUNIT_REPO, URUNIT_REF and URUNIT_BRANCH do nothing. The initrd comes from hull-assets; move ASSETS_VERSION to a release built from the urunit you want."
 fi
@@ -151,14 +166,20 @@ if [ -n "${HVI_REF+set}" ] || [ -n "${HVI_BRANCH+set}" ]; then
 fi
 URUNC_BRANCH="${URUNC_BRANCH:-$URUNC_BRANCH_DEFAULT}"
 URUNC_REF="${URUNC_REF-$URUNC_REF_DEFAULT}"
-# The checkout compares HEAD with the ref, so a ref is a full SHA: a short one,
-# a tag or a branch name would never match.
-if [ -n "$URUNC_REF" ]; then
-    case "$URUNC_REF" in
-        *[!0-9a-f]*) fatal "URUNC_REF='$URUNC_REF' is not a commit: pin a full 40-character SHA" ;;
+HULL_BRANCH="${HULL_BRANCH:-$HULL_BRANCH_DEFAULT}"
+HULL_REF="${HULL_REF-$HULL_REF_DEFAULT}"
+# require_sha <name> <ref>: the checkout compares HEAD with the ref, so a ref is
+# a full SHA: a short one, a tag or a branch name would never match. An empty
+# ref is a tip build, which pinned_note warns about.
+require_sha() {
+    [ -n "$2" ] || return 0
+    case "$2" in
+        *[!0-9a-f]*) fatal "$1='$2' is not a commit: pin a full 40-character SHA" ;;
     esac
-    [ "${#URUNC_REF}" -eq 40 ] || fatal "URUNC_REF='$URUNC_REF' is not a commit: pin a full 40-character SHA"
-fi
+    [ "${#2}" -eq 40 ] || fatal "$1='$2' is not a commit: pin a full 40-character SHA"
+}
+require_sha URUNC_REF "$URUNC_REF"
+require_sha HULL_REF "$HULL_REF"
 # The monitors and virtiofsd come from one monitors-build release. The release
 # is tagged vX.Y.Z and names its per-arch tarball after the monitor versions it
 # carries. monitors-build publishes no checksum file, so each tarball is pinned
@@ -1062,6 +1083,32 @@ if [ "$VARIANT" != "stock" ]; then
     info "urunit: urunc $URUNC_REF pins ${URUNIT_REPO:-urunit}@$URUNIT_REF"
 fi
 
+# ---- hull: built from source (generic-boot / introspection) ------------------
+# stock leaves hull out, as it leaves out hvi: hull boots a plain image on hvi
+# through the urunc built above, and stock ships a released urunc that knows
+# neither. hull is pure Go (its release builds with CGO_ENABLED=0), so this is
+# a cross compile in a container of the build host's arch, not a --platform
+# build. No TELEMETRY_ENDPOINT is passed, so this hull never sends telemetry.
+HULL_INSTALLED=false
+HULL_PINNED=""
+if [ "$VARIANT" != "stock" ]; then
+    command -v docker >/dev/null 2>&1 || fatal "docker is required to build hull from $HULL_REPO"
+    hsrc="$TMP_DIR/hull-src"
+    HULL_PINNED=true
+    [ -n "$HULL_REF" ] || HULL_PINNED=false
+    h_commit="$(checkout_source "$HULL_REPO" "$HULL_BRANCH" "$HULL_REF" "$hsrc")"
+    pinned_note hull "$HULL_REPO" "$HULL_BRANCH" "$HULL_REF" "$h_commit"
+    HULL_REF="$h_commit"
+    info "building hull $HULL_REF ($HULL_GO_IMAGE, linux/$ARCH)"
+    docker run --rm -v "$hsrc":/app -w /app -e HOME=/tmp -e CGO_ENABLED=0 "$HULL_GO_IMAGE" \
+        sh -c "git config --global --add safe.directory /app && make linux LINUX_ARCH=$ARCH" \
+        || fatal "hull build failed"
+    cp "$hsrc/dist/hull_linux_$ARCH" "$DL/hull" || fatal "the hull build left no dist/hull_linux_$ARCH"
+    chmod 0755 "$DL/hull"
+    HULL_INSTALLED=true
+    info "  built hull $HULL_REF"
+fi
+
 # ---- brig + brigd ------------------------------------------------------------
 # brig is not built here: its own release is fetched and repackaged into the tree.
 # "latest", for a local build, resolves to brig's newest release (prereleases
@@ -1183,6 +1230,7 @@ info "laying out the tree"
 install -m 0755 "$DL/urunc" "$STAGE/bin/urunc"
 install -m 0755 "$DL/containerd-shim-urunc-v2" "$STAGE/bin/containerd-shim-urunc-v2"
 install -m 0755 "$DL/runc" "$STAGE/bin/runc"
+[ "$HULL_INSTALLED" = true ] && install -m 0755 "$DL/hull" "$STAGE/bin/hull"
 tar -xzf "$DL/containerd.tar.gz" -C "$STAGE" bin/
 if [ "$ROOTLESS" = true ]; then
     # nerdctl's tarball carries the two rootless launchers beside the binary, so
@@ -1419,12 +1467,14 @@ if [ "$ROOTLESS" = true ]; then
 if [ "\$(id -u)" -eq 0 ]; then
     export CONTAINERD_ADDRESS="\${CONTAINERD_ADDRESS:-unix://$CONTAINERD_SOCK}"
     export NERDCTL_TOML="\${NERDCTL_TOML:-$ETC_DIR/nerdctl.toml}"
+    export NETCONFPATH="\${NETCONFPATH:-$ETC_DIR/cni/net.d}"
 else
     # The address is the one inside the rootlesskit namespace nerdctl re-enters,
     # not a path on the host: containerd-rootless.sh binds the user's runtime
     # directory onto /run/containerd in there.
     export CONTAINERD_ADDRESS="\${CONTAINERD_ADDRESS:-unix:///run/containerd/containerd.sock}"
     export NERDCTL_TOML="\${NERDCTL_TOML:-\${XDG_CONFIG_HOME:-\$HOME/.config}/brig/nerdctl.toml}"
+    export NETCONFPATH="\${NETCONFPATH:-\${XDG_CONFIG_HOME:-\$HOME/.config}/brig/cni/net.d}"
 fi
 CFG
 else
@@ -1433,6 +1483,7 @@ else
 # stack, which only root can drive.
 export CONTAINERD_ADDRESS="\${CONTAINERD_ADDRESS:-unix://$CONTAINERD_SOCK}"
 export NERDCTL_TOML="\${NERDCTL_TOML:-$ETC_DIR/nerdctl.toml}"
+export NETCONFPATH="\${NETCONFPATH:-$ETC_DIR/cni/net.d}"
 CFG
 fi
 cat >> "$STAGE/etc/brig-env.sh" <<CFG
@@ -1441,8 +1492,26 @@ export CONTAINERD_NAMESPACE="\${CONTAINERD_NAMESPACE:-$NAMESPACE}"
 # devmapper needs the system thin pool, so a rootless stack stays on overlayfs.
 export CONTAINERD_SNAPSHOTTER="\${CONTAINERD_SNAPSHOTTER:-$SNAPSHOTTER}"
 export CNI_PATH="\${CNI_PATH:-$CNI_DIR}"
+# NETCONFPATH, set above, is the directory nerdctl.toml names. nerdctl reads
+# that file; hull reads only the variable, and without it looks in
+# /etc/cni/net.d, where the bundle's bridge network is not.
+#
+# nerdctl is brig's runtime here, and BRIG_RUNTIME=hull opts in to the hull
+# beside it. The binary follows the runtime: a BRIG_RUNTIME=hull handed the
+# nerdctl path would drive nerdctl with hull's command line. A runtime the
+# bundle does not carry gets no binary, so brig looks for it on PATH or says
+# it is missing.
 export BRIG_RUNTIME="\${BRIG_RUNTIME:-nerdctl}"
-export BRIG_RUNTIME_BIN="\${BRIG_RUNTIME_BIN:-$BIN_DIR/nerdctl}"
+case "\$BRIG_RUNTIME" in
+    nerdctl) export BRIG_RUNTIME_BIN="\${BRIG_RUNTIME_BIN:-$BIN_DIR/nerdctl}" ;;
+CFG
+if [ "$HULL_INSTALLED" = true ]; then
+    cat >> "$STAGE/etc/brig-env.sh" <<CFG
+    hull) export BRIG_RUNTIME_BIN="\${BRIG_RUNTIME_BIN:-$BIN_DIR/hull}" ;;
+CFG
+fi
+cat >> "$STAGE/etc/brig-env.sh" <<CFG
+esac
 export BRIG_BOOT_ASSETS="\${BRIG_BOOT_ASSETS:-$SHARE_DIR/guest}"
 export PATH="$BIN_DIR:\$PATH"
 CFG
@@ -1533,6 +1602,10 @@ URUNC_REF=$URUNC_REF
 URUNC_PINNED=$URUNC_PINNED
 URUNIT_REPO=$URUNIT_REPO
 URUNIT_REF=$URUNIT_REF
+HULL_REPO=$([ "$HULL_INSTALLED" = true ] && echo "$HULL_REPO" || echo "")
+HULL_BRANCH=$([ "$HULL_INSTALLED" = true ] && echo "$HULL_BRANCH" || echo "")
+HULL_REF=$([ "$HULL_INSTALLED" = true ] && echo "$HULL_REF" || echo "")
+HULL_PINNED=$HULL_PINNED
 HVI_VERSION=$([ "$HVI_INSTALLED" = true ] && echo "$HVI_VERSION" || echo "")
 HVI_COMMIT=$([ "$HVI_INSTALLED" = true ] && echo "$HVI_COMMIT" || echo "")
 INITRD_SOURCE=$KERNEL_SOURCE
@@ -1561,12 +1634,15 @@ PINS
 if [ "$URUNC_PINNED" = false ]; then
     echo "# WARNING: urunc is the tip of $URUNC_BRANCH at build time, not a pinned commit." >> "$STAGE/pins.env"
 fi
+if [ "$HULL_PINNED" = false ]; then
+    echo "# WARNING: hull is the tip of $HULL_BRANCH at build time, not a pinned commit." >> "$STAGE/pins.env"
+fi
 
 # Deterministic tar: sorted names, one fixed timestamp, root-owned, fixed
 # directory and file modes, no extended headers. Fetched components are
-# byte-identical per pin; the urunc binary is byte-identical only if its build
-# is reproducible (fixed commit, SOURCE_DATE_EPOCH, same toolchain image), so a
-# bundle's reproducibility rests on that build too.
+# byte-identical per pin; the urunc and hull binaries are byte-identical only if
+# their builds are reproducible (fixed commit, SOURCE_DATE_EPOCH, same toolchain
+# image), so a bundle's reproducibility rests on those builds too.
 info "packing"
 find "$STAGE" -type d -exec chmod 0755 {} +
 find "$STAGE" -type f ! -perm -u+x -exec chmod 0644 {} +
