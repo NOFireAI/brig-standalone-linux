@@ -1,11 +1,11 @@
 #!/bin/sh
 #
 # Run build-bundle.sh against a stub git, docker and curl, and check which urunc
-# commit it asks for and which urunit commit it records. Nothing is fetched: the
-# stub git records the ref it was asked to fetch, answers rev-parse with it and
-# plants the urunit.pin the build reads from the urunc checkout; the stub docker
-# fakes the urunc build; the stub curl fails the first download, which ends the
-# run.
+# and hull commits it asks for and which urunit commit it records. Nothing is
+# fetched: the stub git records the ref it was asked to fetch, answers rev-parse
+# with it and plants the urunit.pin the build reads from the urunc checkout; the
+# stub docker fakes the urunc and hull builds; the stub curl fails the first
+# download, which ends the run.
 #
 # Needs the tools build-bundle.sh checks for (curl, tar, sha256sum, awk, sed).
 
@@ -22,6 +22,9 @@ command -v sha256sum >/dev/null 2>&1 || skip "build-bundle.sh needs sha256sum"
 urunc_pin="$(sed -n 's/^URUNC_REF_DEFAULT=\([0-9a-f]*\)$/\1/p' "$here/scripts/build-bundle.sh")"
 urunc_branch="$(sed -n 's/^URUNC_BRANCH_DEFAULT=\(.*\)$/\1/p' "$here/scripts/build-bundle.sh")"
 [ "${#urunc_pin}" -eq 40 ] || fail "no URUNC_REF_DEFAULT in build-bundle.sh"
+hull_pin="$(sed -n 's/^HULL_REF_DEFAULT=\([0-9a-f]*\)$/\1/p' "$here/scripts/build-bundle.sh")"
+hull_branch="$(sed -n 's/^HULL_BRANCH_DEFAULT=\(.*\)$/\1/p' "$here/scripts/build-bundle.sh")"
+[ "${#hull_pin}" -eq 40 ] || fail "no HULL_REF_DEFAULT in build-bundle.sh"
 tip=1111111111111111111111111111111111111111
 # The urunit commit the stub urunc checkout pins in its urunit.pin. The build
 # has no urunit pin of its own: it reads that file.
@@ -32,9 +35,11 @@ trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/stub"
 
 # git: log every call. fetch remembers what it was asked for, and rev-parse
-# HEAD answers with it, or with $STUB_HEAD, or with $tip for a branch. A
-# checkout of the urunc source plants urunit.pin, as the real commit carries
-# one; STUB_NO_PIN=1 leaves it out.
+# HEAD answers with it, or with $STUB_HEAD (with $STUB_HULL_HEAD in the hull
+# checkout), or with $tip for a branch. A checkout of the urunc source plants
+# urunit.pin, as the real commit carries one; STUB_NO_PIN=1 leaves it out. A
+# checkout of the hull source plants internal/urunckeys/go.mod, requiring the
+# pinned urunc or $STUB_HULL_URUNC; STUB_HULL_NO_KEYS=1 leaves it out.
 cat > "$T/stub/git" <<STUB
 #!/bin/sh
 echo "git \$*" >> "$T/git.log"
@@ -50,7 +55,8 @@ case "\$1" in
     fetch) for a in "\$@"; do last="\$a"; done; echo "\$last" > "$T/fetched" ;;
     rev-parse)
         f="\$(cat "$T/fetched")"
-        if [ -n "\${STUB_HEAD:-}" ]; then echo "\$STUB_HEAD"
+        if [ -n "\${STUB_HULL_HEAD:-}" ] && [ "\${dir%/hull-src}" != "\$dir" ]; then echo "\$STUB_HULL_HEAD"
+        elif [ -n "\${STUB_HEAD:-}" ]; then echo "\$STUB_HEAD"
         elif [ "\${#f}" -eq 40 ]; then echo "\$f"
         else echo $tip; fi ;;
     checkout)
@@ -62,13 +68,20 @@ case "\$1" in
                         "\${STUB_PIN_REPO:-https://github.com/NOFireAI/urunit.git}" $urunit_pin \\
                         > "\$dir/packaging/container-initrd/urunit.pin"
                 fi ;;
+            */hull-src)
+                if [ -z "\${STUB_HULL_NO_KEYS:-}" ]; then
+                    mkdir -p "\$dir/internal/urunckeys"
+                    printf 'module github.com/brig-sh/hull/internal/urunckeys\n\ngo 1.26.8\n\nrequire github.com/urunc-dev/urunc v0.8.2-0.20261029205741-%s\n' \
+                        "\${STUB_HULL_URUNC:-$(printf '%.12s' "$urunc_pin")}" \
+                        > "\$dir/internal/urunckeys/go.mod"
+                fi ;;
         esac ;;
 esac
 exit 0
 STUB
 
-# docker: the urunc build writes the binaries the script copies out. Anything
-# else is logged and fails: urunit and the initrd are no longer built.
+# docker: the urunc and hull builds write the binaries the script copies out.
+# Anything else is logged and fails: urunit and the initrd are no longer built.
 cat > "$T/stub/docker" <<STUB
 #!/bin/sh
 echo "docker \$*" >> "$T/docker.log"
@@ -85,6 +98,15 @@ case "$*" in
         : > "$src/dist/urunc_static_amd64"
         : > "$src/dist/containerd-shim-urunc-v2_static_amd64"
         exit 0 ;;
+    *"make linux LINUX_ARCH=amd64"*)
+        prev=""
+        for a in "$@"; do
+            case "$prev" in -v) case "$a" in *:/app) src="${a%:/app}" ;; esac ;; esac
+            prev="$a"
+        done
+        mkdir -p "$src/dist"
+        : > "$src/dist/hull_linux_amd64"
+        exit 0 ;;
 esac
 exit 1
 STUB
@@ -93,7 +115,7 @@ printf '#!/bin/sh\nexit 22\n' > "$T/stub/curl"
 chmod 0755 "$T/stub"/*
 
 # build [VAR=value...]: run build-bundle.sh with those variables, output in
-# $T/out.log. URUNC_* and URUNIT_* start unset.
+# $T/out.log. URUNC_*, URUNIT_* and HULL_* start unset.
 build() {
     : > "$T/git.log"
     : > "$T/docker.log"
@@ -101,31 +123,44 @@ build() {
     # Every run ends in a failure, by design: at the first download or at the
     # check under test.
     env -u URUNC_REF -u URUNC_BRANCH -u URUNIT_REF -u URUNIT_BRANCH -u URUNIT_REPO -u HVI_REF -u HVI_BRANCH \
+        -u HULL_REF -u HULL_BRANCH \
         PATH="$T/stub:$PATH" "$@" \
         sh "$here/scripts/build-bundle.sh" --arch amd64 --version test --out "$T/dist" \
         > "$T/out.log" 2>&1 || true
 }
 
-# 1. Defaults: urunc is fetched at its pinned commit, by SHA. urunit is not
-# fetched or built; the build reads the commit urunc's urunit.pin names.
+# 1. Defaults: urunc is fetched at its pinned commit, by SHA, one commit deep.
+# hull is fetched at its pin with its history and tags, since Go derives hull's
+# version from the nearest v* tag. urunit is not fetched or built; the build
+# reads the commit urunc's urunit.pin names.
 build
-grep -qx "git -C .*/urunc-src fetch -q --depth 1 origin $urunc_pin" "$T/git.log" \
+grep -qx "git -C .*/urunc-src fetch -q --depth=1 origin $urunc_pin" "$T/git.log" \
     || { cat "$T/git.log" "$T/out.log" >&2; fail "urunc was not fetched at its pin"; }
 grep -q "urunc: checked out urunc-dev/urunc@$urunc_pin (pinned" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "the build log does not name the pinned urunc"; }
 grep -q "urunit: urunc $urunc_pin pins NOFireAI/urunit@$urunit_pin" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "the build log does not name urunc's urunit pin"; }
+grep -qx "git -C .*/hull-src fetch -q --tags origin $hull_pin" "$T/git.log" \
+    || { cat "$T/git.log" "$T/out.log" >&2; fail "hull was not fetched at its pin"; }
+grep -q "hull: checked out brig-sh/hull@$hull_pin (pinned" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "the build log does not name the pinned hull"; }
+grep -q "hull: checks the urunc keys against urunc $(printf '%.12s' "$urunc_pin"), the bundle's" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "the build log does not say hull matches the bundle's urunc"; }
 grep -q "failed to download" "$T/out.log" \
-    || { cat "$T/out.log" >&2; fail "the build did not get past the urunc build"; }
+    || { cat "$T/out.log" >&2; fail "the build did not get past the urunc and hull builds"; }
 if grep -q "urunit-src" "$T/git.log"; then fail "urunit was fetched"; fi
 grep -q "make static" "$T/docker.log" || fail "the urunc build did not run"
-if grep -qv "make static" "$T/docker.log"; then
-    cat "$T/docker.log" >&2; fail "docker ran for something other than the urunc build"
+grep -q "make linux LINUX_ARCH=amd64" "$T/docker.log" || fail "the hull build did not run"
+# hull is pure Go: a static build with no telemetry endpoint.
+grep "make linux" "$T/docker.log" | grep -q -- "-e CGO_ENABLED=0" || fail "hull was built with cgo"
+if grep -q "TELEMETRY_ENDPOINT" "$T/docker.log"; then fail "hull was built with a telemetry endpoint"; fi
+if grep -v -e "make static" -e "make linux" "$T/docker.log" | grep -q .; then
+    cat "$T/docker.log" >&2; fail "docker ran for something other than the urunc and hull builds"
 fi
 if grep -q -e "git clone" -e "WARNING" "$T/git.log" "$T/out.log"; then
     fail "a pinned build cloned a branch or warned"
 fi
-ok "a default build fetches urunc at its pin and builds no urunit or initrd"
+ok "a default build fetches urunc and hull at their pins and builds no urunit or initrd"
 
 # 1b. A urunc commit with no urunit.pin is refused, and so is a pin that names
 # no full commit.
@@ -147,13 +182,42 @@ grep -q "checked out 2222222222222222222222222222222222222222, not the pinned $u
     || { cat "$T/out.log" >&2; fail "a wrong checkout was not refused"; }
 ok "a checkout other than the pin fails the build"
 
+# 2b. The same for hull.
+build STUB_HULL_HEAD=2222222222222222222222222222222222222222
+grep -q "brig-sh/hull: checked out 2222222222222222222222222222222222222222, not the pinned $hull_pin" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "a wrong hull checkout was not refused"; }
+if grep -q "make linux" "$T/docker.log"; then fail "hull was built from a wrong checkout"; fi
+ok "a hull checkout other than the pin fails the build"
+
+# 2c. A hull that checks the urunc keys against another urunc is refused before
+# it is built, and so is one that does not say which urunc it checks against.
+build STUB_HULL_URUNC=aaaaaaaaaaaa
+grep -q "brig-sh/hull@$hull_pin checks the urunc keys against urunc aaaaaaaaaaaa, but this bundle carries urunc $urunc_pin" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "a hull written against another urunc was not refused"; }
+if grep -q "make linux" "$T/docker.log"; then fail "hull was built against another urunc"; fi
+build STUB_HULL_NO_KEYS=1
+grep -q "brig-sh/hull@$hull_pin has no internal/urunckeys/go.mod" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "a hull without internal/urunckeys/go.mod was not refused"; }
+build STUB_HULL_URUNC=v0.8.2
+grep -q "not a pseudo-version that names a commit" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "a hull whose urunc version names no commit was not refused"; }
+ok "a hull that checks the urunc keys against another urunc is refused"
+
 # 3. An empty ref builds the branch tip, and says so.
 build URUNC_REF=
-grep -qx "git -C .*/urunc-src fetch -q --depth 1 origin refs/heads/$urunc_branch" "$T/git.log" \
+grep -qx "git -C .*/urunc-src fetch -q --depth=1 origin refs/heads/$urunc_branch" "$T/git.log" \
     || { cat "$T/git.log" >&2; fail "URUNC_REF= did not fetch the branch"; }
 grep -q "WARNING: urunc: built urunc-dev/urunc@$tip, the tip of $urunc_branch" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "a tip build did not warn"; }
 ok "URUNC_REF= builds the tip of the branch, with a warning"
+
+# 3b. The same for hull.
+build HULL_REF=
+grep -qx "git -C .*/hull-src fetch -q --tags origin refs/heads/$hull_branch" "$T/git.log" \
+    || { cat "$T/git.log" >&2; fail "HULL_REF= did not fetch the branch"; }
+grep -q "WARNING: hull: built brig-sh/hull@$tip, the tip of $hull_branch" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "a hull tip build did not warn"; }
+ok "HULL_REF= builds the tip of hull's branch, with a warning"
 
 # 4. A branch without a ref is refused before anything is fetched.
 build URUNC_BRANCH=feat/something-else
@@ -161,6 +225,12 @@ grep -q "URUNC_BRANCH=feat/something-else is set but URUNC_REF is not" "$T/out.l
     || { cat "$T/out.log" >&2; fail "a branch without a ref was not refused"; }
 [ ! -s "$T/git.log" ] || fail "git ran for a refused build"
 ok "a branch without a ref is refused"
+
+build HULL_BRANCH=feat/something-else
+grep -q "HULL_BRANCH=feat/something-else is set but HULL_REF is not" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "a hull branch without a ref was not refused"; }
+[ ! -s "$T/git.log" ] || fail "git ran for a refused build"
+ok "a hull branch without a ref is refused"
 
 # 4b. The urunit build knobs are gone, so setting one is refused, and so is
 # the hvi source build that no longer exists.
@@ -186,3 +256,12 @@ grep -q "URUNC_REF='0818ff1' is not a commit" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "a short SHA was not refused"; }
 [ ! -s "$T/git.log" ] || fail "git ran for a refused build"
 ok "a ref that is not a full SHA is refused"
+
+build HULL_REF=main
+grep -q "HULL_REF='main' is not a commit" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "a branch name as a hull ref was not refused"; }
+build HULL_REF=4bf76a6
+grep -q "HULL_REF='4bf76a6' is not a commit" "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "a short SHA as a hull ref was not refused"; }
+[ ! -s "$T/git.log" ] || fail "git ran for a refused build"
+ok "a hull ref that is not a full SHA is refused"

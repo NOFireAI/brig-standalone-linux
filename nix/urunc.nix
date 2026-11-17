@@ -10,13 +10,13 @@
 # commit is the one the bundle release records in its pins.env as URUNC_REF.
 buildGoModule (finalAttrs: {
   pname = "urunc";
-  version = "0-unstable-2026-10-29";
+  version = "0-unstable-2026-11-10";
 
   src = fetchFromGitHub {
     owner = "urunc-dev";
     repo = "urunc";
-    rev = "3c00b69ff9ac1b8bb260975cdc63d18a7043558b";
-    hash = "sha256-NbH+6nQWLEgcI2VBmtA/50EHbMB8Q1k4RJk67miYXtU=";
+    rev = "5c6bc7060d4f6d33b0d4e8fd388f9f04cc88510b";
+    hash = "sha256-XKgvsGtmKeJfDAyDmJ4YtJyC4tkjTHv8nZEcWjKro2I=";
   };
 
   vendorHash = "sha256-08PC8ethomYCZTBfP1PVCCXgXeyrSHHoozcVsWmqJUE=";
