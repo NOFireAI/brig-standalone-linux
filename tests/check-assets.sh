@@ -13,18 +13,18 @@ ok() { echo "ok - $*"; }
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 
-urunc=3c00b69ff9ac1b8bb260975cdc63d18a7043558b
+urunc=5c6bc7060d4f6d33b0d4e8fd388f9f04cc88510b
 urunit=48a61bd480eb57871204523312127b06d0a05363
 other=1111111111111111111111111111111111111111
 
-# assets <urunc-source-json>: write the bundle.json hull-assets 0.1.11 ships,
+# assets <urunc-source-json>: write the bundle.json hull-assets 0.1.12 ships,
 # with the given sources object.
 assets() {
     cat > "$T/bundle.json" <<EOF
 {
   "schemaVersion": 1,
   "platform": "linux-amd64",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "kernel": { "file": "bzImage", "version": "6.18.59" },
   "sources": {
     $1
@@ -45,7 +45,7 @@ refused() {
     grep -q "$1" "$T/err" || { cat "$T/err" >&2; fail "$2 was refused, but not with '$1'"; }
 }
 
-# 1. The bundle.json of hull-assets 0.1.11: urunc matches, no urunit recorded.
+# 1. The bundle.json of hull-assets 0.1.12: urunc matches, no urunit recorded.
 assets "\"urunc\": { \"repo\": \"https://github.com/urunc-dev/urunc\", \"ref\": \"$urunc\" }"
 check || { cat "$T/err" >&2; fail "matching assets were refused"; }
 [ "$(cat "$T/out")" = "$urunc -" ] || fail "printed '$(cat "$T/out")', not the urunc ref and no urunit"

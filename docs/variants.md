@@ -45,7 +45,7 @@ by `build-bundle.sh` and packed into the tarball. The installer just unpacks the
 
 No urunc release publishes a binary that boots a generic container. So the build
 compiles one, from `urunc-dev/urunc` at the commit `build-bundle.sh` pins
-(`3c00b69`, on branch `feat/linux-hvi-v050`), in a
+(`5c6bc70`, on branch `feat/linux-hvi-v050`), in a
 `golang:1.26.8` container:
 
 ```console
@@ -161,12 +161,12 @@ refuses a stock binary, rather than printing a table of zeroes.
 3. Settled: the guest kernel is fetched from `hull-assets`, by the same tags hull
    uses, and checked against its signature; the runtime is built from
    `urunc-dev/urunc` at a pinned commit
-   (`3c00b69`, on `feat/linux-hvi-v050`); and the initrd comes from the same
+   (`5c6bc70`, on `feat/linux-hvi-v050`); and the initrd comes from the same
    hull-assets bundle as the kernel, which the build refuses unless it was built
    from that urunc. urunc is pinned to a commit because a branch tip moves with
    every push; the README's build section says how to move it.
-4. Settled: `build-bundle.sh` fetches hvi from the `brig-sh/hvi-vmm` release
-   hull ships on macOS (`v0.1.0-rc.2`). `scripts/fetch-hvi.sh` checks the
+4. Settled: `build-bundle.sh` fetches hvi from a signed `brig-sh/hvi-vmm`
+   release (`v0.1.0-rc.2`). `scripts/fetch-hvi.sh` checks the
    cosign signature on its `SHA256SUMS`, the pinned sha256 of the tarball and
    the commit its manifest names.
 5. Is `introspection` a variant at all, or `generic-boot` plus an opt-in flag?

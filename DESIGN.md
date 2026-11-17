@@ -35,7 +35,7 @@ now done and is what `install.sh` and `scripts/build-bundle.sh` produce.
 - **Why urunc is built (at release).** Most components are upstream release
   artifacts, hvi among them (`brig-sh/hvi-vmm` `v0.1.0-rc.2`, cosign-verified).
   urunc has no release that carries what brig needs, so the build compiles it
-  from `urunc-dev/urunc` at commit `3c00b69`, on `feat/linux-hvi-v050` (CGO
+  from `urunc-dev/urunc` at commit `5c6bc70`, on `feat/linux-hvi-v050` (CGO
   static, so native per arch under qemu/binfmt). The source is pinned to a
   commit, since a branch tip moves with every push. The README's build section
   says how to move the pin.
