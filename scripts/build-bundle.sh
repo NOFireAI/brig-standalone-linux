@@ -134,10 +134,10 @@ URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.8}"
 # brig-sh/hvi-vmm release hull ships on macOS, static against musl. The tag,
 # its commit and the sha256 of each tarball describe one release, so a bump
 # changes all four together. scripts/fetch-hvi.sh checks them.
-HVI_VERSION=0.1.0-rc.2
-HVI_COMMIT=2ed8f61dde8c20facd5f1a3668b170b07fb0eee1
-HVI_SHA256_LINUX_AMD64=e62358d9abcf2c8999227ef7ba16c25b57e131467eb4df916bffb68578b9ff25
-HVI_SHA256_LINUX_ARM64=3c11e3b1443fb9e39a652a0011ac74d548a7bd05674b6c4115ffbd5a0260e903
+HVI_VERSION=0.1.0-rc.3
+HVI_COMMIT=bde7c58edf3352e112c7c349448090623390aaec
+HVI_SHA256_LINUX_AMD64=150959b450a9f37fbe53122b28f744d49a41bb05d2faae5edcd11e9fe4498b2a
+HVI_SHA256_LINUX_ARM64=50370df6adb58e3aaaa2ac9c95fea72f239fd8069c2f2bdca40f684f44f7ed31
 # A branch given without a ref would otherwise build the pinned commit and
 # ignore the branch, so ask which one was meant.
 if [ -n "${URUNC_BRANCH:-}" ] && [ "$URUNC_BRANCH" != "$URUNC_BRANCH_DEFAULT" ] && [ -z "${URUNC_REF+set}" ]; then
