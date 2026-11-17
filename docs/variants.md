@@ -166,7 +166,7 @@ refuses a stock binary, rather than printing a table of zeroes.
    from that urunc. urunc is pinned to a commit because a branch tip moves with
    every push; the README's build section says how to move it.
 4. Settled: `build-bundle.sh` fetches hvi from a signed `brig-sh/hvi-vmm`
-   release (`v0.1.0-rc.2`). `scripts/fetch-hvi.sh` checks the
+   release (`v0.1.0-rc.3`). `scripts/fetch-hvi.sh` checks the
    cosign signature on its `SHA256SUMS`, the pinned sha256 of the tarball and
    the commit its manifest names.
 5. Is `introspection` a variant at all, or `generic-boot` plus an opt-in flag?
