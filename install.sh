@@ -81,6 +81,10 @@ NAMESPACE="brig"
 SIG_IDENTITY_REGEXP="${INSTALL_BRIG_SIG_IDENTITY:-^https://github.com/NOFireAI/brig-standalone-linux/.github/workflows/release.yml@refs/tags/}"
 SIG_OIDC_ISSUER="${INSTALL_BRIG_SIG_ISSUER:-https://token.actions.githubusercontent.com}"
 
+# Messages name the rootless guide by URL: an install piped from curl has no
+# checkout to find docs/rootless.md in.
+ROOTLESS_DOC="https://github.com/NOFireAI/brig-standalone-linux/blob/main/docs/rootless.md"
+
 # ---------------------------------------------------------------- logging
 
 # say() prints a stage detail, only in verbose mode. warn()/fatal() always print,
@@ -128,8 +132,9 @@ Usage: install.sh [--help] [--verbose] [--quiet] [--system|--user]
 Fetches the brig release tarball and installs it. As root the tree goes to
 /var/lib/brig/data with state in /var/lib/brig and the socket in /run/brig. As a
 normal user it goes to ~/.local/share/brig instead and nothing outside $HOME is
-touched, which needs the host prepared once: see docs/rootless.md. It builds
-nothing.
+touched, which needs the host prepared once: see the rootless guide at
+https://github.com/NOFireAI/brig-standalone-linux/blob/main/docs/rootless.md.
+It builds nothing.
 
   INSTALL_BRIG_RELEASE_REPO   repo that publishes the tarball
                               (default: NOFireAI/brig-standalone-linux)
@@ -157,6 +162,8 @@ nothing.
                               CONTAINERD_SNAPSHOTTER=devmapper to switch at runtime)
   INSTALL_BRIG_POOL_SIZE      thin pool data size (default: 100G, sparse)
   INSTALL_BRIG_POOL_PREALLOC  true to fallocate the pool backing files
+  INSTALL_BRIG_RERUN          the command to print for running the install again
+                              once the host is prepared (default: none)
   INSTALL_BRIG_DEBUG          true for set -x
 USAGE
 }
@@ -448,8 +455,8 @@ FIX
         need="$need\n  vhost_vsock is not loaded at boot"
         cat >> "$fix" <<'FIX'
 cat > /etc/modules-load.d/brig.conf <<'CONF'
-# brig: the vsock device the monitor gives the guest. Written by
-# brig-rootless-setup.sh; the matching udev rule grants access to it.
+# brig: the vsock device the monitor gives the guest. Written by brig's
+# rootless setup; the matching udev rule grants access to it.
 vhost_vsock
 CONF
 FIX
@@ -507,8 +514,8 @@ FIX
             why="sudo cannot run here without a password"
         fi
         cat >&2 <<MSG
-  Nothing was downloaded: $why.
-  Run the commands below as root, or ask an admin to, and then run this
+  The installer stopped before it downloaded the bundle: $why.
+  Run the commands below as root, or ask an admin to, and then run the
   installer again. It needs no sudo after that.
 
 sudo sh -eu <<'BRIG_ROOT'
@@ -516,12 +523,17 @@ $(cat "$fix")
 BRIG_ROOT
 
 MSG
+        # The caller knows how the install was started; this script does not.
+        if [ -n "${INSTALL_BRIG_RERUN:-}" ]; then
+            printf '  The command to run again, as %s:\n\n    %s\n\n' \
+                "$me" "$INSTALL_BRIG_RERUN" >&2
+        fi
         if [ -z "${OWN_MADE:-}" ]; then
-            echo "  With sudo of your own, run 'sudo -v' and then this installer again: it" >&2
+            echo "  With sudo of your own, run 'sudo -v' and then the installer again: it" >&2
             echo "  makes these itself." >&2
         fi
     fi
-    echo "  See docs/rootless.md." >&2
+    echo "  See $ROOTLESS_DOC" >&2
     exit 1
 }
 
@@ -1122,13 +1134,13 @@ main() {
         if getent group "$BRIG_GROUP" >/dev/null 2>&1; then
             if [ "$BUNDLE_ROOTLESS" = "true" ]; then
                 grp_note="  group:     $BRIG_GROUP owns the socket, which is not enough to run
-             brig as a normal user: see docs/rootless.md, or run
+             brig as a normal user: see $ROOTLESS_DOC, or run
              $BIN_DIR/brig-ctl rootless as that user
 "
             else
                 grp_note="  group:     $BRIG_GROUP owns the socket, which is not enough to run
              brig as a normal user, and this bundle carries no rootless
-             path. Install a -rootless bundle for that: docs/rootless.md
+             path. Install a -rootless bundle for that: $ROOTLESS_DOC
 "
             fi
         fi
