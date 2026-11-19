@@ -71,8 +71,23 @@ ok "the summary names the bundle and its version"
 
 # The line to type, since the only other full paths on screen are under the
 # tree's bin directory, and a brig run from there has no launcher environment.
-grep -qF "export PATH=\"$T/home/.local/bin:\$PATH\"" "$T/out.log" \
-    || { cat "$T/out.log" >&2; fail "the summary does not give the PATH line"; }
+# shellcheck disable=SC2016
+grep -qF 'export PATH="$HOME/.local/bin:$PATH"' "$T/out.log" \
+    || { cat "$T/out.log" >&2; fail "the summary does not give the PATH line as a startup file has it"; }
 grep -qF "Do not add $T/home/.local/share/brig/data/bin:" "$T/out.log" \
     || { cat "$T/out.log" >&2; fail "the summary does not warn off the tree's bin directory"; }
 ok "the summary gives the PATH line"
+
+# A PATH entry written with a trailing slash is the same directory.
+if ! env -u XDG_CONFIG_HOME -u XDG_DATA_HOME \
+    HOME="$T/home" XDG_RUNTIME_DIR="$T/run" PATH="$T/stub:$T/home/.local/bin/:$PATH" \
+    INSTALL_BRIG_BUNDLE="$T/bundle.tar.gz" \
+    sh "$here/install.sh" > "$T/out2.log" 2>&1; then
+    cat "$T/out2.log" >&2
+    fail "the second install failed"
+fi
+if grep -q "is not on your PATH" "$T/out2.log"; then
+    cat "$T/out2.log" >&2
+    fail "a PATH with the launcher directory and a trailing slash was told to add it"
+fi
+ok "a trailing slash on the PATH entry counts"
