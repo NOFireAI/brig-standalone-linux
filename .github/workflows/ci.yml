@@ -232,12 +232,14 @@ jobs:
             rootless) net="$HOME/.config/brig/cni/net.d" ;;
             *)        net="$prefix/etc/cni/net.d" ;;
           esac
+          # The bundle carries hull, so hull is the default; nerdctl is
+          # still one setting away.
           got="$(launcher)"
-          [ "$got" = "nerdctl $prefix/bin/nerdctl $net" ] \
-            || { echo "default launcher: got '$got'"; exit 1; }
-          got="$(launcher BRIG_RUNTIME=hull)"
           [ "$got" = "hull $prefix/bin/hull $net" ] \
-            || { echo "BRIG_RUNTIME=hull launcher: got '$got'"; exit 1; }
+            || { echo "default launcher: got '$got'"; exit 1; }
+          got="$(launcher BRIG_RUNTIME=nerdctl)"
+          [ "$got" = "nerdctl $prefix/bin/nerdctl $net" ] \
+            || { echo "BRIG_RUNTIME=nerdctl launcher: got '$got'"; exit 1; }
           got="$(launcher BRIG_RUNTIME=hull BRIG_RUNTIME_BIN=/opt/hull NETCONFPATH=/opt/net)"
           [ "$got" = "hull /opt/hull /opt/net" ] \
             || { echo "the launcher overrode the caller's values: got '$got'"; exit 1; }
@@ -245,9 +247,9 @@ jobs:
           # brig-ctl env does, the launcher drops the binary it set the first
           # time and names the new runtime's.
           got="$(env -i HOME="$HOME" PATH=/usr/bin:/bin \
-            sh -c ". '$t/etc/brig-env.sh'; BRIG_RUNTIME=hull; . '$t/etc/brig-env.sh'; echo \"\$BRIG_RUNTIME \$BRIG_RUNTIME_BIN\"")"
-          [ "$got" = "hull $prefix/bin/hull" ] \
-            || { echo "the launcher re-sourced for hull kept nerdctl: got '$got'"; exit 1; }
+            sh -c ". '$t/etc/brig-env.sh'; BRIG_RUNTIME=nerdctl; . '$t/etc/brig-env.sh'; echo \"\$BRIG_RUNTIME \$BRIG_RUNTIME_BIN\"")"
+          [ "$got" = "nerdctl $prefix/bin/nerdctl" ] \
+            || { echo "the launcher re-sourced for nerdctl kept hull: got '$got'"; exit 1; }
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
