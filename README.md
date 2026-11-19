@@ -186,24 +186,24 @@ $ curl -fsSL https://raw.githubusercontent.com/NOFireAI/brig-standalone-linux/ma
 [docs/rootless.md](docs/rootless.md) has the detail, including the two things
 that still need root once per host, and what a home install gives up.
 
-### hull beside nerdctl
+### hull and nerdctl
 
-nerdctl is brig's runtime here. The bundle also carries hull, the runtime brig
-drives on macOS, built for Linux: a containerd client that boots the same urunc,
-monitors and guest assets. `BRIG_RUNTIME=hull` selects it, and the launcher then
-points brig at the bundle's hull rather than its nerdctl:
+hull is brig's runtime here, and needs the brig in the bundle to be v0.6.0 or
+later: an older brig refuses the shipped profiles on hull. It is the runtime
+brig drives on macOS, built for Linux: a containerd client that boots the same urunc, monitors and guest assets,
+and puts each networked sandbox on a network gateway of its own, which enforces
+the egress policy and serves routes and published ports. nerdctl stays in the
+bundle, and `BRIG_RUNTIME=nerdctl` selects it, for instance for an image whose
+`USER` is a name, which hull on Linux refuses:
 
 ```console
-$ BRIG_RUNTIME=hull brig doctor
+$ BRIG_RUNTIME=nerdctl brig doctor
 ```
 
-It needs a brig that drives hull on Linux, which the `v0.5.0` in this bundle
-does not. Even then, hull on Linux boots a sandbox on the shared bridge or with
-no network, and brig refuses what it cannot enforce there yet: an egress policy,
-a route, `network: isolated` and a published port. The shipped agent profiles
-ask for an isolated network, so they stay on nerdctl for now. Every value the
-launcher sets still defers to the environment, so `BRIG_RUNTIME_BIN` points brig
-at another hull.
+A sandbox stays on the runtime that booted it, so one booted on nerdctl before
+this release needs `BRIG_RUNTIME=nerdctl` until `brig rm` removes it. Every value
+the launcher sets still defers to the environment, so `BRIG_RUNTIME_BIN` points
+brig at another hull.
 
 The launcher works out the binary each time it is sourced. A shell that has run
 `eval "$(brig-ctl env)"` has the bundle's `bin/` first on its `PATH`, so `brig`
@@ -211,7 +211,7 @@ there is the binary itself and nothing sources the launcher again: set
 `BRIG_RUNTIME` before the eval, or run the eval again after changing it.
 
 ```console
-# export BRIG_RUNTIME=hull
+# export BRIG_RUNTIME=nerdctl
 # eval "$(/var/lib/brig/data/bin/brig-ctl env)"
 ```
 
