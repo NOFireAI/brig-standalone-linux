@@ -1098,6 +1098,10 @@ fi
 # a cross compile in a container of the build host's arch, not a --platform
 # build. No TELEMETRY_ENDPOINT is passed, so this hull never sends telemetry.
 HULL_INSTALLED=false
+# The runtime brig drives when BRIG_RUNTIME names none: hull once the bundle
+# carries it, since hull on Linux serves the policies, routes and published
+# ports nerdctl does and publishes on a running sandbox too.
+DEFAULT_RUNTIME=nerdctl
 HULL_PINNED=""
 if [ "$VARIANT" != "stock" ]; then
     command -v docker >/dev/null 2>&1 || fatal "docker is required to build hull from $HULL_REPO"
@@ -1140,6 +1144,7 @@ if [ "$VARIANT" != "stock" ]; then
     cp "$hsrc/dist/hull_linux_$ARCH" "$DL/hull" || fatal "the hull build left no dist/hull_linux_$ARCH"
     chmod 0755 "$DL/hull"
     HULL_INSTALLED=true
+    DEFAULT_RUNTIME=hull
     info "  built hull $HULL_REF"
 fi
 
@@ -1531,15 +1536,15 @@ export CNI_PATH="\${CNI_PATH:-$CNI_DIR}"
 # install prefixes, but reads the variable in preference, so the export keeps
 # hull and nerdctl on one directory, an install at another prefix included.
 #
-# nerdctl is brig's runtime here, and BRIG_RUNTIME=hull opts in to the hull
-# beside it. The binary follows the runtime: a BRIG_RUNTIME=hull handed the
+# hull is brig's runtime here when the bundle carries it, and nerdctl
+# otherwise; BRIG_RUNTIME names either one. The binary follows the runtime: a BRIG_RUNTIME=hull handed the
 # nerdctl path would drive nerdctl with hull's command line. A runtime the
 # bundle does not carry gets no binary, so brig looks for it on PATH or says
 # it is missing. A BRIG_RUNTIME_BIN that names one of this bundle's runtimes
 # came from this file, sourced before for whatever runtime was set then (an
 # earlier eval of brig-ctl env), so it is worked out again. Any other value
 # is the caller's and stands.
-export BRIG_RUNTIME="\${BRIG_RUNTIME:-nerdctl}"
+export BRIG_RUNTIME="\${BRIG_RUNTIME:-$DEFAULT_RUNTIME}"
 case "\${BRIG_RUNTIME_BIN:-}" in
     "$BIN_DIR/nerdctl"|"$BIN_DIR/hull") unset BRIG_RUNTIME_BIN ;;
 esac
