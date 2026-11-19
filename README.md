@@ -188,8 +188,9 @@ that still need root once per host, and what a home install gives up.
 
 ### hull and nerdctl
 
-hull is brig's runtime here. It is the runtime brig drives on macOS, built for
-Linux: a containerd client that boots the same urunc, monitors and guest assets,
+hull is brig's runtime here, and needs the brig in the bundle to be v0.6.0 or
+later: an older brig refuses the shipped profiles on hull. It is the runtime
+brig drives on macOS, built for Linux: a containerd client that boots the same urunc, monitors and guest assets,
 and puts each networked sandbox on a network gateway of its own, which enforces
 the egress policy and serves routes and published ports. nerdctl stays in the
 bundle, and `BRIG_RUNTIME=nerdctl` selects it, for instance for an image whose

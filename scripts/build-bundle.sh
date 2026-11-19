@@ -1100,7 +1100,8 @@ fi
 HULL_INSTALLED=false
 # The runtime brig drives when BRIG_RUNTIME names none: hull once the bundle
 # carries it, since hull on Linux serves the policies, routes and published
-# ports nerdctl does and publishes on a running sandbox too.
+# ports nerdctl does and publishes on a running sandbox too. That takes a brig
+# of v0.6.0 or later; an older one refuses the shipped profiles on hull.
 DEFAULT_RUNTIME=nerdctl
 HULL_PINNED=""
 if [ "$VARIANT" != "stock" ]; then
