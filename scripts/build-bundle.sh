@@ -140,7 +140,7 @@ URUNC_GO_IMAGE="${URUNC_GO_IMAGE:-golang:1.26.8}"
 # urunc bump moves this pin to a hull that checks against the new commit.
 HULL_REPO="${HULL_REPO:-brig-sh/hull}"
 HULL_BRANCH_DEFAULT=main
-HULL_REF_DEFAULT=4bf76a6335d55016e5b29f27eb169730d4a28f20
+HULL_REF_DEFAULT=d0eab08061f56c0edd5f060109bbee35e19abe64
 HULL_GO_IMAGE="${HULL_GO_IMAGE:-golang:1.26.8}"
 # urunit, the one binary of the initrd, is not built here: the initrd comes from
 # hull-assets. pins.env records the urunit commit that urunc pins in
@@ -222,7 +222,7 @@ else
 fi
 ASSETS_REGISTRY="${ASSETS_REGISTRY:-ghcr.io}"
 ASSETS_REPO="${ASSETS_REPO:-nofireai/hull-assets}"
-ASSETS_VERSION="${ASSETS_VERSION:-0.1.12}"
+ASSETS_VERSION="${ASSETS_VERSION:-0.1.14}"
 # Who signs hull-assets: the identity brig checks before it boots a kernel from
 # there. The build checks the same one before it packs the kernel.
 ASSETS_SIGNER_DEFAULT='^https://github\.com/NOFireAI/hull-assets/\.github/workflows/build-assets\.yml@refs/heads/main$'
